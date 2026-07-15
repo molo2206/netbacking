@@ -377,7 +377,7 @@ export class AuthServiceService {
 
       // Générer les tokens JWT
       const userRole = user.role || UserRole.USER;
-      const tokens = this.generateJwtTokens(user.id, user.email, userRole);
+      const tokens = this.generateJwtTokens(user.id, user.email || null, userRole);
 
       // Créer la session
       const sessionToken = crypto.randomUUID();
@@ -593,7 +593,7 @@ export class AuthServiceService {
 
       // Générer les tokens JWT
       const userRole = user.role || UserRole.USER;
-      const tokens = this.generateJwtTokens(user.id, user.email, userRole);
+      const tokens = this.generateJwtTokens(user.id, user.email || null, userRole);
 
       // Gestion deviceId
       let deviceId = dto.fcmToken;
@@ -775,7 +775,7 @@ export class AuthServiceService {
       const userRole = session.user.role || UserRole.USER;
       const tokens = this.generateJwtTokens(
         session.user.id,
-        session.user.email,
+        session.user.email || null,
         userRole,
       );
 
@@ -1697,8 +1697,8 @@ export class AuthServiceService {
     return `NE${timestamp}${random}`;
   }
 
-  private generateJwtTokens(userId: string, email: string, role: UserRole) {
-    const payload = { sub: userId, email, role };
+  private generateJwtTokens(userId: string, email: string | null, role: UserRole) {
+    const payload = { sub: userId, email: email || '', role };
     const jwtSecret = process.env.JWT_SECRET || 'secret';
     const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || 'refresh_secret';
     const jwtExpiration = process.env.JWT_EXPIRATION || '24h';
