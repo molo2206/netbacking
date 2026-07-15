@@ -1,0 +1,698 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  clientId             String?              @unique(map: "clientId") @db.VarChar(50)
+  email                String?              @db.VarChar(255)
+  phone                String               @unique(map: "phone") @db.VarChar(50)
+  password             String               @db.VarChar(255)
+  firstName            String               @db.VarChar(100)
+  lastName             String               @db.VarChar(100)
+  photo                String?              @db.VarChar(255)
+  role                 UserRole?            @default(USER)
+  status               users_status?        @default(PENDING_VERIFICATION)
+  isEmailVerified      Boolean?             @default(false)
+  isPhoneVerified      Boolean?             @default(false)
+  isTwoFactorEnabled   Boolean?             @default(false)
+  twoFactorSecret      String?              @db.VarChar(255)
+  twoFactorBackupCodes String?              @db.Text
+  lastLoginAt          DateTime?            @db.DateTime(0)
+  lastLoginIp          String?              @db.VarChar(45)
+  failedLoginAttempts  Int?                 @default(0)
+  lockedUntil          DateTime?            @db.DateTime(0)
+  preferredLanguage    String?              @default("fr") @db.VarChar(10)
+  preferredCurrency    String?              @default("XAF") @db.VarChar(3)
+  timezone             String?              @default("Africa/Douala") @db.VarChar(50)
+  metadata             String?              @db.LongText
+  createdBy            String?              @db.VarChar(36)
+  createdAt            DateTime?            @default(now()) @db.DateTime(0)
+  updatedAt            DateTime?            @default(now()) @updatedAt @db.DateTime(0)
+  deletedAt            DateTime?            @db.DateTime(0)
+  pin                  String?              @db.VarChar(255)
+  pinStatus            Boolean?             @default(false)
+  failedPinAttempts    Int?                 @default(0)
+  pinLockedUntil       DateTime?            @db.DateTime(0)
+  activity_logs        activity_logs[]
+  auditLogs            AuditLog[]
+  beneficiaries        Beneficiary[]
+  devices              Device[]
+  kycDocuments         KYCDocument[]
+  login_attempt        login_attempt[]
+  loginHistory         LoginHistory[]
+  notifications        Notification[]
+  otp                  otp[]
+  passwordResetTokens  PasswordResetToken[]
+  sessions             Session[]
+  sentTransfers        Transfer[]           @relation("SentTransfers")
+  user_has_resources   user_has_resources[]
+  user_roles           user_roles[]
+  user_settings        user_settings?
+
+  @@index([phone], map: "idx_users_phone")
+  @@index([role], map: "idx_users_role")
+  @@index([status], map: "idx_users_status")
+  @@index([clientId], map: "idx_users_clientId")
+  @@index([failedPinAttempts], map: "idx_users_failedPinAttempts")
+  @@index([pinStatus], map: "idx_users_pinStatus")
+  @@map("users")
+}
+
+model Session {
+  id           String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId       String    @db.VarChar(36)
+  token        String    @unique(map: "token") @db.VarChar(255)
+  refreshToken String    @unique(map: "refreshToken") @db.VarChar(255)
+  expiresAt    DateTime  @db.DateTime(0)
+  ipAddress    String?   @db.VarChar(45)
+  userAgent    String?   @db.Text
+  deviceId     String?   @db.VarChar(255)
+  deviceName   String?   @db.VarChar(255)
+  os           String?   @db.VarChar(50)
+  browser      String?   @db.VarChar(50)
+  isActive     Boolean?  @default(true)
+  logoutAt     DateTime? @db.DateTime(0)
+  createdAt    DateTime? @default(now()) @db.DateTime(0)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "sessions_ibfk_1")
+
+  @@index([createdAt], map: "idx_sessions_createdAt")
+  @@index([isActive], map: "idx_sessions_isActive")
+  @@index([refreshToken], map: "idx_sessions_refreshToken")
+  @@index([token], map: "idx_sessions_token")
+  @@index([userId], map: "idx_sessions_userId")
+  @@map("sessions")
+}
+
+model Account {
+  id                String                @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  clientId          String                @db.VarChar(50)
+  accountType       accounts_accountType? @default(COURANT)
+  balance           Decimal?              @default(0.00) @db.Decimal(15, 2)
+  currency          String?               @default("XAF") @db.VarChar(3)
+  status            accounts_status?      @default(ACTIVE)
+  isMain            Boolean?              @default(false)
+  createdAt         DateTime?             @default(now()) @db.DateTime(0)
+  updatedAt         DateTime?             @default(now()) @updatedAt @db.DateTime(0)
+  clients           clients               @relation(fields: [clientId], references: [clientId], onDelete: Cascade, onUpdate: Restrict, map: "fk_accounts_client")
+  transactions      Transaction[]
+  sentTransfers     Transfer[]            @relation("SenderAccount")
+  receivedTransfers Transfer[]            @relation("ReceiverAccount")
+
+  @@index([status], map: "idx_accounts_status")
+  @@index([clientId], map: "fk_accounts_client")
+  @@map("accounts")
+}
+
+model Transfer {
+  id                String              @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  reference         String              @unique(map: "reference") @db.VarChar(255)
+  senderAccountId   String              @db.VarChar(36)
+  receiverAccountId String              @db.VarChar(36)
+  receiverName      String?             @db.VarChar(255)
+  receiverPhone     String?             @db.VarChar(50)
+  receiverEmail     String?             @db.VarChar(255)
+  amount            Decimal             @db.Decimal(15, 2)
+  fees              Decimal?            @default(0.00) @db.Decimal(10, 2)
+  totalAmount       Decimal             @db.Decimal(15, 2)
+  currency          String?             @default("XAF") @db.VarChar(3)
+  platform          transfers_platform? @default(WEB)
+  type              transfers_type
+  status            transfers_status?   @default(PENDING)
+  description       String?             @db.Text
+  initiatedBy       String              @db.VarChar(36)
+  approvedBy        String?             @db.VarChar(36)
+  completedAt       DateTime?           @db.DateTime(0)
+  failedReason      String?             @db.Text
+  createdAt         DateTime?           @default(now()) @db.DateTime(0)
+  updatedAt         DateTime?           @default(now()) @updatedAt @db.DateTime(0)
+  notifications     Notification[]
+  transaction       Transaction?
+  senderAccount     Account             @relation("SenderAccount", fields: [senderAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_1")
+  receiverAccount   Account             @relation("ReceiverAccount", fields: [receiverAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_2")
+  senderUser        User                @relation("SentTransfers", fields: [initiatedBy], references: [id], onUpdate: Restrict, map: "transfers_ibfk_3")
+
+  @@index([createdAt], map: "idx_transfers_createdAt")
+  @@index([platform], map: "idx_transfers_platform")
+  @@index([receiverAccountId], map: "idx_transfers_receiverAccountId")
+  @@index([reference], map: "idx_transfers_reference")
+  @@index([senderAccountId], map: "idx_transfers_senderAccountId")
+  @@index([status], map: "idx_transfers_status")
+  @@index([initiatedBy], map: "idx_transfers_initiatedBy")
+  @@map("transfers")
+}
+
+model Transaction {
+  id            String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  transferId    String               @unique(map: "transferId") @db.VarChar(36)
+  accountId     String               @db.VarChar(36)
+  type          transactions_type
+  status        transactions_status? @default(PENDING)
+  amount        Decimal              @db.Decimal(15, 2)
+  balanceBefore Decimal              @db.Decimal(15, 2)
+  balanceAfter  Decimal              @db.Decimal(15, 2)
+  reference     String               @unique(map: "reference") @db.VarChar(255)
+  description   String?              @db.Text
+  createdAt     DateTime?            @default(now()) @db.DateTime(0)
+  transfer      Transfer             @relation(fields: [transferId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_1")
+  account       Account              @relation(fields: [accountId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_2")
+
+  @@index([accountId], map: "idx_transactions_accountId")
+  @@index([createdAt], map: "idx_transactions_createdAt")
+  @@index([reference], map: "idx_transactions_reference")
+  @@index([status], map: "idx_transactions_status")
+  @@index([transferId], map: "idx_transactions_transferId")
+  @@index([type], map: "idx_transactions_type")
+  @@map("transactions")
+}
+
+model Beneficiary {
+  id            String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId        String    @db.VarChar(36)
+  accountNumber String    @db.VarChar(100)
+  accountName   String    @db.VarChar(255)
+  bankName      String?   @db.VarChar(255)
+  phone         String?   @db.VarChar(50)
+  email         String?   @db.VarChar(255)
+  nickname      String    @db.VarChar(100)
+  isFavorite    Boolean?  @default(false)
+  createdAt     DateTime? @default(now()) @db.DateTime(0)
+  updatedAt     DateTime? @default(now()) @updatedAt @db.DateTime(0)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "beneficiaries_ibfk_1")
+
+  @@unique([userId, accountNumber], map: "uk_beneficiary_user_account")
+  @@index([isFavorite], map: "idx_beneficiaries_isFavorite")
+  @@index([userId], map: "idx_beneficiaries_userId")
+  @@map("beneficiaries")
+}
+
+model Notification {
+  id         String                @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId     String                @db.VarChar(36)
+  transferId String?               @db.VarChar(36)
+  type       notifications_type
+  title      String                @db.VarChar(255)
+  content    String                @db.Text
+  data       String?               @db.LongText
+  status     notifications_status? @default(PENDING)
+  sentAt     DateTime?             @db.DateTime(0)
+  readAt     DateTime?             @db.DateTime(0)
+  createdAt  DateTime?             @default(now()) @db.DateTime(0)
+  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "notifications_ibfk_1")
+  transfer   Transfer?             @relation(fields: [transferId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "notifications_ibfk_2")
+
+  @@index([createdAt], map: "idx_notifications_createdAt")
+  @@index([status], map: "idx_notifications_status")
+  @@index([userId], map: "idx_notifications_userId")
+  @@index([transferId], map: "idx_notifications_transferId")
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String            @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId    String?           @db.VarChar(36)
+  userName  String?           @db.VarChar(255)
+  userRole  String?           @db.VarChar(100)
+  action    String            @db.VarChar(100)
+  entity    String            @db.VarChar(100)
+  entityId  String?           @db.VarChar(36)
+  oldValue  String?           @db.LongText
+  newValue  String?           @db.LongText
+  ipAddress String?           @db.VarChar(45)
+  userAgent String?           @db.Text
+  level     audit_logs_level? @default(INFO)
+  message   String?           @db.Text
+  createdAt DateTime?         @default(now()) @db.DateTime(0)
+  user      User?             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "audit_logs_ibfk_1")
+
+  @@index([action], map: "idx_audit_logs_action")
+  @@index([createdAt], map: "idx_audit_logs_createdAt")
+  @@index([entity], map: "idx_audit_logs_entity")
+  @@index([userId], map: "idx_audit_logs_userId")
+  @@index([level], map: "idx_audit_logs_level")
+  @@map("audit_logs")
+}
+
+model Device {
+  id         String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  deviceId   String    @unique(map: "deviceId") @db.VarChar(255)
+  deviceName String?   @db.VarChar(255)
+  deviceType String?   @db.VarChar(100)
+  os         String?   @db.VarChar(50)
+  pushToken  String?   @db.VarChar(255)
+  isTrusted  Boolean?  @default(false)
+  isActive   Boolean?  @default(true)
+  lastUsedAt DateTime? @db.DateTime(0)
+  createdAt  DateTime? @default(now()) @db.DateTime(0)
+  updatedAt  DateTime? @default(now()) @updatedAt @db.DateTime(0)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "devices_ibfk_1")
+
+  @@index([deviceId], map: "idx_devices_deviceId")
+  @@index([userId], map: "idx_devices_userId")
+  @@map("devices")
+}
+
+model KYCDocument {
+  id              String                @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId          String                @db.VarChar(36)
+  documentType    String                @db.VarChar(50)
+  documentNumber  String?               @db.VarChar(100)
+  frontImage      String                @db.VarChar(255)
+  backImage       String?               @db.VarChar(255)
+  status          kyc_documents_status? @default(PENDING)
+  verifiedBy      String?               @db.VarChar(36)
+  verifiedAt      DateTime?             @db.DateTime(0)
+  rejectionReason String?               @db.Text
+  expiresAt       DateTime?             @db.DateTime(0)
+  metadata        String?               @db.LongText
+  createdAt       DateTime?             @default(now()) @db.DateTime(0)
+  updatedAt       DateTime?             @default(now()) @updatedAt @db.DateTime(0)
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "kyc_documents_ibfk_1")
+
+  @@index([status], map: "idx_kyc_documents_status")
+  @@index([userId], map: "idx_kyc_documents_userId")
+  @@map("kyc_documents")
+}
+
+model LoginHistory {
+  id            String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId        String    @db.VarChar(36)
+  ipAddress     String    @db.VarChar(45)
+  userAgent     String?   @db.Text
+  deviceId      String?   @db.VarChar(255)
+  location      String?   @db.VarChar(255)
+  success       Boolean
+  failureReason String?   @db.Text
+  loginAt       DateTime? @default(now()) @db.DateTime(0)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "login_history_ibfk_1")
+
+  @@index([loginAt], map: "idx_login_history_loginAt")
+  @@index([userId], map: "idx_login_history_userId")
+  @@map("login_history")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId    String    @db.VarChar(36)
+  token     String    @unique(map: "token") @db.VarChar(255)
+  expiresAt DateTime  @db.DateTime(0)
+  used      Boolean?  @default(false)
+  createdAt DateTime? @default(now()) @db.DateTime(0)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "password_reset_tokens_ibfk_1")
+
+  @@index([token], map: "idx_password_reset_tokens_token")
+  @@index([userId], map: "userId")
+  @@map("password_reset_tokens")
+}
+
+model Settings {
+  id          String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  key         String    @unique(map: "key") @db.VarChar(255)
+  value       String    @db.LongText
+  description String?   @db.Text
+  category    String    @db.VarChar(100)
+  isPublic    Boolean?  @default(false)
+  updatedBy   String?   @db.VarChar(36)
+  createdAt   DateTime? @default(now()) @db.DateTime(0)
+  updatedAt   DateTime? @default(now()) @updatedAt @db.DateTime(0)
+
+  @@index([category], map: "idx_settings_category")
+  @@index([key], map: "idx_settings_key")
+  @@map("settings")
+}
+
+model activity_logs {
+  id           String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId       String    @db.VarChar(36)
+  userName     String?   @db.VarChar(255)
+  userRole     String?   @db.VarChar(100)
+  activityType String    @db.VarChar(100)
+  activity     String    @db.VarChar(255)
+  description  String?   @db.Text
+  ipAddress    String?   @db.VarChar(45)
+  userAgent    String?   @db.Text
+  metadata     String?   @db.LongText
+  createdAt    DateTime? @default(now()) @db.DateTime(0)
+  users        User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "activity_logs_ibfk_1")
+
+  @@index([activityType], map: "idx_activity_logs_activityType")
+  @@index([createdAt], map: "idx_activity_logs_createdAt")
+  @@index([userId], map: "idx_activity_logs_userId")
+}
+
+model daily_summary {
+  id                String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  date              DateTime  @unique(map: "date") @db.Date
+  totalUsers        Int?      @default(0)
+  activeUsers       Int?      @default(0)
+  newUsers          Int?      @default(0)
+  totalTransactions Int?      @default(0)
+  totalAmount       Decimal?  @default(0.00) @db.Decimal(15, 2)
+  totalFees         Decimal?  @default(0.00) @db.Decimal(15, 2)
+  successRate       Decimal?  @default(0.00) @db.Decimal(5, 2)
+  metadata          String?   @db.LongText
+  createdAt         DateTime? @default(now()) @db.DateTime(0)
+
+  @@index([date], map: "idx_daily_summary_date")
+}
+
+model permissions {
+  id               String             @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name             String             @unique(map: "name") @db.VarChar(100)
+  displayName      String             @db.VarChar(100)
+  resource         String             @db.VarChar(100)
+  action           String             @db.VarChar(50)
+  description      String?            @db.Text
+  category         String?            @db.VarChar(50)
+  isSystem         Boolean?           @default(false)
+  isActive         Boolean?           @default(true)
+  createdAt        DateTime?          @default(now()) @db.DateTime(0)
+  role_permissions role_permissions[]
+
+  @@index([action], map: "idx_permissions_action")
+  @@index([category], map: "idx_permissions_category")
+  @@index([name], map: "idx_permissions_name")
+  @@index([resource], map: "idx_permissions_resource")
+}
+
+model platform_stats {
+  id                String                   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  date              DateTime                 @db.Date
+  totalUsers        Int?                     @default(0)
+  activeUsers       Int?                     @default(0)
+  newUsers          Int?                     @default(0)
+  totalTransactions Int?                     @default(0)
+  totalAmount       Decimal?                 @default(0.00) @db.Decimal(15, 2)
+  totalFees         Decimal?                 @default(0.00) @db.Decimal(15, 2)
+  platform          platform_stats_platform? @default(WEB)
+  metadata          String?                  @db.LongText
+  createdAt         DateTime?                @default(now()) @db.DateTime(0)
+
+  @@unique([date, platform], map: "uk_platform_stats_date")
+  @@index([date], map: "idx_platform_stats_date")
+}
+
+model role_permissions {
+  id           String      @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  roleId       String      @db.VarChar(36)
+  permissionId String      @db.VarChar(36)
+  createdAt    DateTime?   @default(now()) @db.DateTime(0)
+  roles        roles       @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "role_permissions_ibfk_1")
+  permissions  permissions @relation(fields: [permissionId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "role_permissions_ibfk_2")
+
+  @@unique([roleId, permissionId], map: "uk_role_permission")
+  @@index([permissionId], map: "permissionId")
+}
+
+model roles {
+  id               String             @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name             String             @unique(map: "name") @db.VarChar(100)
+  displayName      String             @db.VarChar(100)
+  description      String?            @db.Text
+  level            Int?               @default(0)
+  isSystem         Boolean?           @default(false)
+  isActive         Boolean?           @default(true)
+  permissions      String?            @db.LongText
+  createdBy        String?            @db.VarChar(36)
+  createdAt        DateTime?          @default(now()) @db.DateTime(0)
+  updatedAt        DateTime?          @default(now()) @db.DateTime(0)
+  role_permissions role_permissions[]
+  user_roles       user_roles[]
+
+  @@index([isActive], map: "idx_roles_isActive")
+  @@index([name], map: "idx_roles_name")
+}
+
+model user_roles {
+  id         String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  roleId     String    @db.VarChar(36)
+  assignedBy String?   @db.VarChar(36)
+  assignedAt DateTime? @default(now()) @db.DateTime(0)
+  expiresAt  DateTime? @db.DateTime(0)
+  isActive   Boolean?  @default(true)
+  users      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "user_roles_ibfk_1")
+  roles      roles     @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "user_roles_ibfk_2")
+
+  @@unique([userId, roleId], map: "uk_user_role")
+  @@index([roleId], map: "idx_user_roles_roleId")
+  @@index([userId], map: "idx_user_roles_userId")
+}
+
+model otp {
+  id        String    @id @db.VarChar(36)
+  email     String    @db.VarChar(255)
+  userId    String?   @db.VarChar(36)
+  otpCode   String    @db.VarChar(255)
+  isUsed    Boolean?  @default(false)
+  createdAt DateTime? @default(now()) @db.DateTime(0)
+  expiresAt DateTime? @db.DateTime(0)
+  users     User?     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "otp_ibfk_1")
+
+  @@index([email], map: "idx_otp_email")
+  @@index([userId], map: "idx_otp_userId")
+}
+
+model login_attempt {
+  id                  String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId              String?   @db.VarChar(36)
+  identifier          String    @db.VarChar(255)
+  success             Boolean?  @default(false)
+  ipAddress           String?   @db.VarChar(45)
+  userAgent           String?   @db.Text
+  failed_pin_attempts Int?
+  pin_locked_until    DateTime? @db.DateTime(0)
+  createdAt           DateTime? @default(now()) @db.DateTime(0)
+  users               User?     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "login_attempt_ibfk_1")
+
+  @@index([createdAt], map: "idx_login_attempt_createdAt")
+  @@index([identifier], map: "idx_login_attempt_identifier")
+  @@index([success], map: "idx_login_attempt_success")
+  @@index([userId], map: "idx_login_attempt_userId")
+}
+
+model resources {
+  id                 String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name               String               @unique(map: "name") @db.VarChar(255)
+  label              String               @db.VarChar(255)
+  description        String?              @db.Text
+  createdAt          DateTime?            @default(now()) @db.DateTime(0)
+  updatedAt          DateTime?            @default(now()) @db.DateTime(0)
+  user_has_resources user_has_resources[]
+
+  @@index([name], map: "idx_resources_name")
+}
+
+model user_has_resources {
+  id         String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  resourceId String    @db.VarChar(36)
+  grantedAt  DateTime? @default(now()) @db.DateTime(0)
+  grantedBy  String?   @db.VarChar(36)
+  expiresAt  DateTime? @db.DateTime(0)
+  canCreate  Boolean?  @default(false)
+  canRead    Boolean?  @default(false)
+  canUpdate  Boolean?  @default(false)
+  canDelete  Boolean?  @default(false)
+  canManage  Boolean?  @default(false)
+  users      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "user_has_resources_ibfk_1")
+  resources  resources @relation(fields: [resourceId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "user_has_resources_ibfk_2")
+
+  @@unique([userId, resourceId], map: "uk_user_resource")
+  @@index([resourceId], map: "idx_user_has_resources_resourceId")
+  @@index([userId], map: "idx_user_has_resources_userId")
+}
+
+model clients {
+  id             String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  clientId       String    @unique(map: "clientId") @db.VarChar(50)
+  fullName       String    @db.VarChar(255)
+  email          String?   @db.VarChar(255)
+  phone          String?   @db.VarChar(50)
+  address        String?   @db.Text
+  city           String?   @db.VarChar(100)
+  country        String?   @default("CM") @db.VarChar(2)
+  idNumber       String?   @db.VarChar(50)
+  idType         String?   @db.VarChar(50)
+  dateOfBirth    DateTime? @db.DateTime(0)
+  gender         String?   @db.VarChar(20)
+  status         String?   @default("ACTIVE") @db.VarChar(20)
+  kycLevel       String?   @default("LEVEL_0") @db.VarChar(20)
+  kycVerifiedAt  DateTime? @db.DateTime(0)
+  kycVerifiedBy  String?   @db.VarChar(36)
+  profilePicture String?   @db.VarChar(255)
+  createdAt      DateTime? @default(now()) @db.DateTime(0)
+  updatedAt      DateTime? @default(now()) @db.DateTime(0)
+  accounts       Account[]
+
+  @@index([clientId], map: "idx_clients_clientId")
+  @@index([email], map: "idx_clients_email")
+  @@index([phone], map: "idx_clients_phone")
+  @@index([status], map: "idx_clients_status")
+}
+
+model user_settings {
+  id                  String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  user_id             String               @unique(map: "user_id") @db.VarChar(36)
+  language            String?              @default("fr") @db.VarChar(10)
+  theme               user_settings_theme? @default(system)
+  email_notifications Boolean?             @default(true)
+  sms_notifications   Boolean?             @default(true)
+  push_notifications  Boolean?             @default(true)
+  two_factor_enabled  Boolean?             @default(false)
+  last_device         String?              @db.VarChar(255)
+  created_at          DateTime             @default(now()) @db.Timestamp(0)
+  updated_at          DateTime             @default(now()) @db.Timestamp(0)
+  users               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "user_settings_ibfk_1")
+
+  @@index([user_id], map: "idx_user_settings_user")
+}
+
+model app_settings {
+  id                   String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  app_name             String?   @db.VarChar(255)
+  slogan               String?   @db.VarChar(255)
+  description          String?   @db.Text
+  email                String?   @db.VarChar(255)
+  phone                String?   @db.VarChar(50)
+  address              String?   @db.Text
+  default_language     String?   @default("fr") @db.VarChar(10)
+  default_currency     String?   @default("CDF") @db.VarChar(10)
+  timezone             String?   @default("Africa/Lubumbashi") @db.VarChar(100)
+  logo                 String?   @db.Text
+  favicon              String?   @db.Text
+  primary_color        String?   @db.VarChar(20)
+  secondary_color      String?   @db.VarChar(20)
+  maintenance_mode     Boolean?  @default(false)
+  maintenance_message  String?   @db.Text
+  allow_registration   Boolean?  @default(true)
+  transfer_fee         Float?    @default(0) @db.Float
+  withdraw_fee         Float?    @default(0) @db.Float
+  facebook             String?   @db.VarChar(255)
+  instagram            String?   @db.VarChar(255)
+  twitter              String?   @db.VarChar(255)
+  stripe_enabled       Boolean?  @default(false)
+  paypal_enabled       Boolean?  @default(false)
+  mobile_money_enabled Boolean?  @default(false)
+  createdAt            DateTime? @default(now()) @db.DateTime(0)
+  updatedAt            DateTime? @default(now()) @db.DateTime(0)
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+  MERCHANT
+  AGENT
+  SUB_AGENT
+}
+
+enum accounts_accountType {
+  COURANT
+  EPARGNE
+  ENTREPRISE
+  PREMIUM
+}
+
+enum notifications_type {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum transactions_type {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  PAYMENT
+  FEE
+}
+
+enum transactions_status {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum accounts_status {
+  ACTIVE
+  FROZEN
+  CLOSED
+  BLOCKED
+}
+
+enum kyc_documents_status {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum notifications_status {
+  PENDING
+  SENT
+  READ
+  FAILED
+}
+
+enum platform_stats_platform {
+  WEB
+  MOBILE_APP
+  USSD
+  ATM
+  AGENCY
+  API
+  BACK_OFFICE
+}
+
+enum audit_logs_level {
+  INFO
+  WARN
+  ERROR
+}
+
+enum transfers_platform {
+  WEB
+  MOBILE_APP
+  USSD
+  ATM
+  AGENCY
+  API
+  BACK_OFFICE
+}
+
+enum transfers_type {
+  INTERNAL
+  EXTERNAL
+  INSTANT
+  SCHEDULED
+}
+
+enum transfers_status {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum users_status {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  LOCKED
+  PENDING_VERIFICATION
+  DELETED
+}
+
+enum user_settings_theme {
+  system
+  light
+  dark
+}

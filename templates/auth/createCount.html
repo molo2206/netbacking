@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bienvenue sur AfiaGap</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 30px 0;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #333;
+        background-color: #e9edf3;
+      }
+
+      .container {
+        margin: 0 auto;
+        width: 100%;
+        max-width: 600px;
+        background-color: #fff;
+        padding: 0;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+      }
+
+      .header {
+        text-align: center;
+        padding: 30px 20px 15px;
+        border-bottom: 1px solid #eee;
+        background-color: #fff;
+      }
+
+      .logo {
+        max-width: 120px;
+        margin-bottom: 10px;
+      }
+
+      .header-title {
+        font-size: 20px;
+        color: #1c1e21;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .content {
+        padding: 20px 30px;
+        background-color: #fff;
+      }
+
+      .button {
+        display: inline-block;
+        margin-top: 30px;
+        padding: 12px 24px;
+        font-size: 16px;
+        color: white;
+        background-color: #2daec3;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      .highlight {
+        background-color: #f3f4f6;
+        padding: 14px 20px;
+        border-radius: 8px;
+        display: inline-block;
+        font-weight: 500;
+        color: #111827;
+        margin: 20px 0;
+      }
+
+      .footer {
+        color: #aaa;
+        font-size: 0.8em;
+        line-height: 1.5;
+        font-weight: 300;
+        padding: 20px;
+        text-align: center;
+        background-color: #fff;
+      }
+
+      .email-info {
+        text-align: center;
+        font-size: 13px;
+        color: #666;
+        margin-top: 15px;
+      }
+
+      .email-info a {
+        text-decoration: none;
+        color: #2daec3;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="header">
+        <img
+          src="https://apiafiagap.afiagap.com/public/uploads/afia.png"
+          alt="Logo AfiaGap"
+          class="logo"
+        />
+        <p class="header-title">Bienvenue sur AfiaGap</p>
+      </div>
+
+      <div class="content">
+        <strong>Bonjour {{ userWithoutPassword.full_name }},</strong>
+        <p>
+          Nous sommes heureux de vous compter parmi les nouveaux membres de la
+          plateforme <strong>AfiaGap</strong>.
+        </p>
+
+        <p>
+          Votre compte a été créé avec succès. Vous avez désormais accès à un
+          espace dédié vous permettant de suivre, gérer et contribuer activement
+          à l’amélioration de la santé communautaire.
+        </p>
+        <div class="email-info">
+          Pour toute question ou besoin d’assistance, vous pouvez nous contacter
+          <a href="mailto:info@cosamed.org">info@cosamed.org</a>
+        </div>
+      </div>
+
+      <hr style="border: none; border-top: 0.5px solid #ddd; margin: 0 30px" />
+
+      <div class="footer">
+        Pour en savoir plus sur AfiaGap et votre compte, visitez
+        <strong style="color: #2daec3">www.afiagap.com</strong>
+      </div>
+    </div>
+    <div class="email-info">
+      <a style="color: #2daec3" href="https://cosamed.org">Cosamed</a> |
+      Kinshasa | RDC
+    </div>
+    <div class="email-info">
+      &copy; {{ year }} Cosamed asbl. Tous droits réservés.
+    </div>
+  </body>
+</html>

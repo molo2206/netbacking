@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title }}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+      body {
+        margin: 0;
+        padding: 30px 0;
+        font-family: 'Poppins', 'Helvetica Neue', sans-serif;
+        color: #1e2a3e;
+        background-color: #f4f7fc;
+      }
+      .container {
+        margin: 0 auto;
+        width: 100%;
+        max-width: 580px;
+        background-color: #ffffff;
+        border-radius: 20px;
+        box-shadow: 0 20px 35px -10px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      .header {
+        text-align: center;
+        padding: 35px 20px 20px;
+        background: linear-gradient(135deg, #233fc0 0%, #1a2f8f 100%);
+      }
+      .logo {
+        max-width: 140px;
+        margin-bottom: 15px;
+      }
+      .header-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: #ffffff;
+        margin: 0;
+        letter-spacing: -0.3px;
+      }
+      .content {
+        padding: 35px 30px 25px;
+        background-color: #ffffff;
+      }
+      .otp-box {
+        background: linear-gradient(135deg, #f0f4ff 0%, #e9effa 100%);
+        border-radius: 16px;
+        padding: 20px;
+        text-align: center;
+        margin: 25px 0;
+      }
+      .otp-code {
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: 8px;
+        color: #233fc0;
+        background-color: #ffffff;
+        display: inline-block;
+        padding: 12px 24px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        font-family: monospace;
+      }
+      .footer {
+        text-align: center;
+        padding: 20px 20px 25px;
+        background-color: #f8fafd;
+        border-top: 1px solid #e2e8f0;
+        font-size: 12px;
+        color: #5a6874;
+      }
+      .email-info {
+        text-align: center;
+        font-size: 12px;
+        color: #5a6874;
+        margin-top: 20px;
+        background-color: #f8fafd;
+        padding: 10px;
+      }
+      .email-info a {
+        color: #233fc0;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #e2e8f0;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <img
+          src="https://elezardc.org/logo-default.png"
+          alt="ACCESPAY"
+          class="logo"
+        />
+        <h1 class="header-title">{{ title }}</h1>
+      </div>
+      <div class="content">
+        <strong style="font-size: 18px">{{ greeting }}</strong>
+        <p style="margin-top: 12px; line-height: 1.5">{{ message }}</p>
+        <div class="otp-box">
+          <div class="otp-code">{{ otpCode }}</div>
+        </div>
+        <p style="font-size: 14px; color: #4b5563">
+          {{ expiry }}<br />
+          {{ ignore }}
+        </p>
+        <p style="margin-top: 20px; font-size: 14px">
+          {{ thanks }}<br />
+          {{ team }}
+        </p>
+      </div>
+      <hr />
+      <div class="footer">
+        {{ footer }}<br />
+        <a href="https://accespay.com" style="color: #233fc0">accespay.com</a>
+      </div>
+    </div>
+    <div class="email-info">
+      {{ sent_to }} <a href="mailto:{{ email }}">{{ email }}</a>
+    </div>
+    <div class="email-info">{{ copyright }}</div>
+  </body>
+</html>
