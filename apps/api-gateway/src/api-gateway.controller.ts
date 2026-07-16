@@ -1731,7 +1731,6 @@ export class ApiGatewayController {
   }
 
   @Get('clients')
-  @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async listAllClients(
     @CurrentUser() currentUser: any,
     @Query('page') page?: string,
@@ -1741,11 +1740,7 @@ export class ApiGatewayController {
     @Query('kycLevel') kycLevel?: string,
     @Headers('lang') langHeader?: string,
   ) {
-    // Vérifier que l'utilisateur est admin
-    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
-      throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
-    }
-
+   
     const lang = langHeader || 'fr';
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
