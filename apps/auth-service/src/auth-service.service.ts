@@ -108,11 +108,6 @@ export class AuthServiceService {
 
   // ==================== REGISTER ====================
   // apps/auth-service/src/auth-service.service.ts
-
-  // apps/auth-service/src/auth-service.service.ts
-
-  // apps/auth-service/src/auth-service.service.ts
-
   async register(data: RegisterDto, ipAddress?: string) {
     const clientId = data.clientId;
     const lang = data.lang || 'fr';
@@ -271,7 +266,8 @@ export class AuthServiceService {
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
       // ✅ Récupérer les valeurs par défaut pour phone et email
-      const finalPhone = clientInfo?.phone || data.phone || phone; // Utiliser le téléphone du client ou celui fourni
+      // CORRECTION : Utiliser clientInfo?.phone ou data.phone, pas de variable 'phone'
+      const finalPhone = clientInfo?.phone || data.phone || clientId;
       const finalEmail = clientInfo?.email || data.email || null;
 
       // ✅ Construire firstName et lastName
