@@ -12,7 +12,8 @@ import {
   transactions_status,
   transfers_status,
   transfers_type,
-  transfers_platform
+  transfers_platform,
+  transactions_movement,
 } from '@prisma/client';
 import * as crypto from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -126,6 +127,8 @@ export class TransactionServiceService {
   // ========================= TRANSFERT =========================
 
   // apps/transaction-service/src/transaction.service.ts
+  // apps/transaction-service/src/transaction.service.ts
+
   async transfer(data: {
     senderAccountId: string;
     receiverAccountId: string;
@@ -265,7 +268,7 @@ export class TransactionServiceService {
       const newReceiverBalance = receiverBalance + data.amount;
 
       // ==========================================
-      // 9. TRANSACTION PRISMA (ATOMIQUE)
+      // 9. TRANSACTION PRISMA (ATOMIQUE) AVEC movement
       // ==========================================
       const [senderTx, receiverTx] = await this.prisma.$transaction([
         // Mettre à jour le compte de l'émetteur (débit)
@@ -286,7 +289,7 @@ export class TransactionServiceService {
           },
         }),
 
-        // Créer la transaction pour l'émetteur (débit)
+        // ✅ Créer la transaction pour l'émetteur (DÉBIT)
         this.prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
@@ -299,10 +302,11 @@ export class TransactionServiceService {
             reference: `DEBIT-${reference}`,
             description: `Transfer to ${receiverName || 'Unknown'}`,
             status: transactions_status.COMPLETED,
+            movement: transactions_movement.DEBIT, // ✅ AJOUTÉ
           },
         }),
 
-        // Créer la transaction pour le destinataire (crédit)
+        // ✅ Créer la transaction pour le destinataire (CRÉDIT)
         this.prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
@@ -315,6 +319,7 @@ export class TransactionServiceService {
             reference: `CREDIT-${reference}`,
             description: `Transfer from ${senderAccount.clients?.fullName || 'Unknown'}`,
             status: transactions_status.COMPLETED,
+            movement: transactions_movement.CREDIT, // ✅ AJOUTÉ
           },
         }),
 
@@ -379,7 +384,6 @@ export class TransactionServiceService {
       // 12. NOTIFICATIONS (Optionnel)
       // ==========================================
       try {
-        // Notification pour l'émetteur
         const senderLang = await this.getUserLanguage(data.initiatedBy);
         await this.notificationHelper.notify(
           data.initiatedBy,
@@ -396,7 +400,6 @@ export class TransactionServiceService {
           senderLang,
         );
 
-        // Notification pour le destinataire
         if (receiverAccount.clients?.clientId) {
           const receiverUser = await this.prisma.user.findFirst({
             where: { clientId: receiverAccount.clients.clientId },
@@ -447,10 +450,7 @@ export class TransactionServiceService {
       };
     } catch (error) {
       if (error instanceof RpcException) throw error;
-
-      // Logger l'erreur pour le débogage
       console.error('[Transfer] Error:', error);
-
       throw new RpcException({
         status: 'error',
         message: error.message || this.i18nService.translate('transfer_failed', lang),

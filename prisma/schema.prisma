@@ -39,6 +39,7 @@ model User {
   pinStatus            Boolean?             @default(false)
   failedPinAttempts    Int?                 @default(0)
   pinLockedUntil       DateTime?            @db.DateTime(0)
+  platform             String?              @db.VarChar(36)
   activity_logs        activity_logs[]
   auditLogs            AuditLog[]
   beneficiaries        Beneficiary[]
@@ -148,19 +149,20 @@ model Transfer {
 }
 
 model Transaction {
-  id            String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  transferId    String               @db.VarChar(36)
-  accountId     String               @db.VarChar(36)
+  id            String                 @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  transferId    String                 @db.VarChar(36)
+  accountId     String                 @db.VarChar(36)
   type          transactions_type
-  status        transactions_status? @default(PENDING)
-  amount        Decimal              @db.Decimal(15, 2)
-  balanceBefore Decimal              @db.Decimal(15, 2)
-  balanceAfter  Decimal              @db.Decimal(15, 2)
-  reference     String               @unique(map: "reference") @db.VarChar(255)
-  description   String?              @db.Text
-  createdAt     DateTime?            @default(now()) @db.DateTime(0)
-  transfer      Transfer             @relation(fields: [transferId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_1")
-  account       Account              @relation(fields: [accountId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_2")
+  status        transactions_status?   @default(PENDING)
+  movement      transactions_movement? @default(DEBIT)
+  amount        Decimal                @db.Decimal(15, 2)
+  balanceBefore Decimal                @db.Decimal(15, 2)
+  balanceAfter  Decimal                @db.Decimal(15, 2)
+  reference     String                 @unique(map: "reference") @db.VarChar(255)
+  description   String?                @db.Text
+  createdAt     DateTime?              @default(now()) @db.DateTime(0)
+  transfer      Transfer               @relation(fields: [transferId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_1")
+  account       Account                @relation(fields: [accountId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_2")
 
   @@index([accountId], map: "idx_transactions_accountId")
   @@index([createdAt], map: "idx_transactions_createdAt")
@@ -695,4 +697,9 @@ enum user_settings_theme {
   system
   light
   dark
+}
+
+enum transactions_movement {
+  CREDIT
+  DEBIT
 }

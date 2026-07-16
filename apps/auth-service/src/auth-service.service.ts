@@ -273,6 +273,7 @@ export class AuthServiceService {
           role: UserRole.USER,
           status: users_status.ACTIVE,
           clientId: finalClientId,
+          platform: data.platform || null,
           ...(data.referralCode && {
             referredBy: data.referralCode,
           }),
@@ -445,6 +446,7 @@ export class AuthServiceService {
           updatedAt: user.updatedAt,
           clientId: user.clientId,
           sessions: formattedSessions,
+          platform: user.platform || null,
           accounts: accounts.map(account => ({
             id: account.id,
             clientId: account.clientId,
@@ -488,6 +490,7 @@ export class AuthServiceService {
           photo: true,
           role: true,
           status: true,
+          platform: true,
           isEmailVerified: true,
           isPhoneVerified: true,
           isTwoFactorEnabled: true,
@@ -739,6 +742,7 @@ export class AuthServiceService {
           updatedAt: user.updatedAt,
           clientId: user.clientId,
           sessions: formattedSessions,
+          platform: user.platform || null,
           accounts: accounts.map(account => ({
             id: account.id,
             clientId: account.clientId,
@@ -1472,7 +1476,7 @@ export class AuthServiceService {
   }
 
   // ==================== GET PROFILE ====================
-async getProfile(userId: string) {
+  async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -1742,12 +1746,16 @@ async getProfile(userId: string) {
     return `NE${timestamp}${random}`;
   }
 
+  // apps/auth-service/src/auth-service.service.ts
+
   private generateJwtTokens(userId: string, email: string | null, role: UserRole) {
     const payload = { sub: userId, email: email || '', role };
     const jwtSecret = process.env.JWT_SECRET || 'secret';
     const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || 'refresh_secret';
-    const jwtExpiration = process.env.JWT_EXPIRATION || '24h';
-    const jwtRefreshExpiration = process.env.JWT_REFRESH_EXPIRATION || '7d';
+
+    // ✅ Augmenter la durée des tokens
+    const jwtExpiration = process.env.JWT_EXPIRATION || '30d';      // 30 jours
+    const jwtRefreshExpiration = process.env.JWT_REFRESH_EXPIRATION || '90d'; // 90 jours
 
     const accessToken = this.jwtService.sign(payload as any, {
       secret: jwtSecret,

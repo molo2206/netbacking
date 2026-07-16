@@ -1,7 +1,7 @@
 // apps/transaction-service/src/dto/create-transaction.dto.ts
 
 import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min } from 'class-validator';
-import { transactions_type, transactions_status, transfers_type, transfers_platform } from '@prisma/client';
+import { transactions_type, transactions_status, transfers_type, transfers_platform, transactions_movement } from '@prisma/client';
 
 export class CreateTransactionDto {
   @IsNotEmpty()
@@ -32,6 +32,11 @@ export class CreateTransactionDto {
   @IsOptional()
   @IsString()
   transferId?: string;
+
+  // ✅ Ajout du mouvement
+  @IsOptional()
+  @IsEnum(transactions_movement)
+  movement?: transactions_movement;
 }
 
 export class TransferDto {
@@ -80,7 +85,6 @@ export class TransferDto {
   @IsEnum(transfers_platform)
   platform?: transfers_platform;
 
-  // ✅ Rendre optionnel car il sera ajouté par le guard
   @IsOptional()
   @IsString()
   initiatedBy?: string;
@@ -132,6 +136,10 @@ export class TransactionFilterDto {
   @IsOptional()
   @IsEnum(transactions_status)
   status?: transactions_status;
+
+  @IsOptional()
+  @IsEnum(transactions_movement)
+  movement?: transactions_movement;
 
   @IsOptional()
   startDate?: Date;

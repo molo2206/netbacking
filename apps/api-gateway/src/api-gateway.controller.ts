@@ -165,11 +165,14 @@ export class ApiGatewayController {
 
   // ==================== AUTH ENDPOINTS ====================
 
+  // apps/api-gateway/src/api-gateway.controller.ts
+
   @Post('auth/register')
   async register(
     @Body() body: any,
     @Headers('lang') langHeader?: string,
     @Headers('user-agent') userAgent?: string,
+    @Headers('x-client') clientHeader?: string, // ✅ Ajouter le header x-client
   ) {
     const lang = langHeader || 'fr';
 
@@ -186,11 +189,15 @@ export class ApiGatewayController {
       throw new HttpException('Last name is required', HttpStatus.BAD_REQUEST);
     }
 
+    // ✅ Déterminer la plateforme depuis le header x-client
+    const platform = clientHeader || body.platform || 'WEB';
+
     return this.sendAuthMessage(
       'auth.register',
       {
         ...body,
         lang,
+        platform, // ✅ Passer la plateforme dans le payload
         deviceInfo: body.deviceInfo || userAgent || 'unknown',
       },
       'Registration failed',
