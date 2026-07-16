@@ -272,7 +272,7 @@ export class AuthServiceService {
       let firstName = data.firstName || 'User';
       let lastName = data.lastName || clientId;
 
-      // ✅ Utiliser firstName et lastName du client (modifié)
+      // ✅ Utiliser firstName et lastName du client
       if (clientInfo) {
         firstName = data.firstName || clientInfo.firstName || 'User';
         lastName = data.lastName || clientInfo.lastName || clientId;
@@ -340,7 +340,7 @@ export class AuthServiceService {
         }
       }
 
-      // ✅ SMS BIENVENUE (modifié)
+      // ✅ SMS BIENVENUE
       const clientPhone = clientInfo?.phone || user.phone;
       if (clientPhone) {
         try {
@@ -356,7 +356,7 @@ export class AuthServiceService {
         }
       }
 
-      // ✅ EMAIL BIENVENUE (modifié)
+      // ✅ EMAIL BIENVENUE
       const clientEmail2 = clientInfo?.email || user.email;
       if (clientEmail2) {
         try {
@@ -453,7 +453,7 @@ export class AuthServiceService {
         });
       }
 
-      // ✅ RÉPONSE
+      // ✅ RÉPONSE AVEC SETTINGS
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -482,13 +482,21 @@ export class AuthServiceService {
             isMain: account.isMain,
             accountNumber: account.accountNumber
           })),
+          // ✅ AJOUT DES SETTINGS
+          settings: {
+            language: data.lang || 'fr',
+            theme: 'system',
+            email_notifications: true,
+            sms_notifications: true,
+            push_notifications: true,
+            two_factor_enabled: false
+          }
         },
       };
     } finally {
       registerLocks.delete(key);
     }
   }
-
   // ==================== LOGIN ====================
   async login(
     dto: LoginDto & { lang?: string; userAgent?: string },
@@ -732,6 +740,19 @@ export class AuthServiceService {
         });
       }
 
+      // ✅ Récupérer les settings de l'utilisateur
+      const userSettings = await this.prisma.user_settings.findUnique({
+        where: { user_id: user.id },
+        select: {
+          language: true,
+          theme: true,
+          email_notifications: true,
+          sms_notifications: true,
+          push_notifications: true,
+          two_factor_enabled: true,
+        },
+      });
+
       // Récupérer toutes les sessions actives
       const sessions = await this.prisma.session.findMany({
         where: {
@@ -752,7 +773,7 @@ export class AuthServiceService {
         expires_at: session.expiresAt,
       }));
 
-      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER
+      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER AVEC SETTINGS
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -781,6 +802,15 @@ export class AuthServiceService {
             isMain: account.isMain,
             accountNumber: account.accountNumber
           })),
+          // ✅ AJOUT DES SETTINGS
+          settings: {
+            language: userSettings?.language || user.preferredLanguage || 'fr',
+            theme: userSettings?.theme || 'system',
+            email_notifications: userSettings?.email_notifications ?? true,
+            sms_notifications: userSettings?.sms_notifications ?? true,
+            push_notifications: userSettings?.push_notifications ?? true,
+            two_factor_enabled: userSettings?.two_factor_enabled ?? false,
+          }
         },
       };
     } catch (error) {
@@ -797,7 +827,6 @@ export class AuthServiceService {
       });
     }
   }
-
   // ==================== REFRESH TOKEN ====================
   async refreshToken(refreshToken: string) {
     try {
