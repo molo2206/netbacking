@@ -2,14 +2,15 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <title>Bienvenue sur AfiaGap</title>
+    <title>Bienvenue sur AccesFinance</title>
+
     <style>
       body {
         margin: 0;
         padding: 30px 0;
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
         color: #333;
-        background-color: #e9edf3;
+        background-color: #f4f7fc;
       }
 
       .container {
@@ -17,34 +18,32 @@
         width: 100%;
         max-width: 600px;
         background-color: #fff;
-        padding: 0;
-        border-radius: 8px;
+        border-radius: 12px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         overflow: hidden;
       }
 
       .header {
         text-align: center;
-        padding: 30px 20px 15px;
-        border-bottom: 1px solid #eee;
-        background-color: #fff;
+        padding: 30px 20px;
+        background: linear-gradient(135deg, #233fc0 0%, #1a2f8f 100%);
       }
 
       .logo {
-        max-width: 120px;
-        margin-bottom: 10px;
+        max-width: 130px;
+        margin-bottom: 12px;
       }
 
       .header-title {
-        font-size: 20px;
-        color: #1c1e21;
+        font-size: 24px;
+        color: #ffffff;
         font-weight: 600;
         margin: 0;
       }
 
       .content {
-        padding: 20px 30px;
-        background-color: #fff;
+        padding: 30px;
+        background-color: #ffffff;
       }
 
       .button {
@@ -53,7 +52,7 @@
         padding: 12px 24px;
         font-size: 16px;
         color: white;
-        background-color: #2daec3;
+        background-color: #233fc0;
         border-radius: 6px;
         text-decoration: none;
         font-weight: 500;
@@ -70,13 +69,13 @@
       }
 
       .footer {
-        color: #aaa;
-        font-size: 0.8em;
-        line-height: 1.5;
-        font-weight: 300;
+        color: #5a6874;
+        font-size: 13px;
+        line-height: 1.6;
         padding: 20px;
         text-align: center;
-        background-color: #fff;
+        background-color: #f8fafd;
+        border-top: 1px solid #e2e8f0;
       }
 
       .email-info {
@@ -88,7 +87,7 @@
 
       .email-info a {
         text-decoration: none;
-        color: #2daec3;
+        color: #233fc0;
       }
     </style>
   </head>
@@ -97,44 +96,63 @@
     <div class="container">
       <div class="header">
         <img
-          src="https://apiafiagap.afiagap.com/public/uploads/afia.png"
-          alt="Logo AfiaGap"
+          src="https://elezardc.org/logo-default.png"
+          alt="Logo AccesFinance"
           class="logo"
         />
-        <p class="header-title">Bienvenue sur AfiaGap</p>
+
+        <h1 class="header-title">Bienvenue sur AccesFinance</h1>
       </div>
 
       <div class="content">
-        <strong>Bonjour {{ userWithoutPassword.full_name }},</strong>
+        <strong style="font-size: 18px;">
+          Bonjour {{ userWithoutPassword.full_name }},
+        </strong>
+
         <p>
-          Nous sommes heureux de vous compter parmi les nouveaux membres de la
-          plateforme <strong>AfiaGap</strong>.
+          Nous sommes ravis de vous accueillir parmi les utilisateurs de
+          <strong>AccesFinance</strong>.
         </p>
 
         <p>
-          Votre compte a été créé avec succès. Vous avez désormais accès à un
-          espace dédié vous permettant de suivre, gérer et contribuer activement
-          à l’amélioration de la santé communautaire.
+          Votre compte a été créé avec succès. Vous pouvez désormais accéder à
+          votre espace sécurisé pour gérer vos finances, effectuer vos
+          transactions et profiter de l'ensemble des services proposés par
+          AccesFinance.
         </p>
+
+        <p>
+          Nous vous remercions de votre confiance et sommes heureux de vous
+          accompagner dans vos opérations financières au quotidien.
+        </p>
+
         <div class="email-info">
-          Pour toute question ou besoin d’assistance, vous pouvez nous contacter
-          <a href="mailto:info@cosamed.org">info@cosamed.org</a>
+          Pour toute question ou besoin d'assistance, contactez-nous à
+          <a href="mailto:support@accesfinance.com">
+            support@accesfinance.com
+          </a>
         </div>
       </div>
 
-      <hr style="border: none; border-top: 0.5px solid #ddd; margin: 0 30px" />
-
       <div class="footer">
-        Pour en savoir plus sur AfiaGap et votre compte, visitez
-        <strong style="color: #2daec3">www.afiagap.com</strong>
+        Pour en savoir plus sur AccesFinance, visitez
+        <strong style="color: #233fc0;">
+          www.accesfinance.com
+        </strong>
       </div>
     </div>
+
     <div class="email-info">
-      <a style="color: #2daec3" href="https://cosamed.org">Cosamed</a> |
-      Kinshasa | RDC
+      <a
+        style="color: #233fc0;"
+        href="https://accesfinance.com"
+      >
+        AccesFinance
+      </a>
     </div>
+
     <div class="email-info">
-      &copy; {{ year }} Cosamed asbl. Tous droits réservés.
+      &copy; {{ year }} AccesFinance. Tous droits réservés.
     </div>
   </body>
 </html>
