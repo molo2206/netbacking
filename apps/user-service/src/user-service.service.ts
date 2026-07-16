@@ -1656,6 +1656,120 @@ export class UserServiceService {
       data: accounts,
     };
   }
+
+  async getAccountByNumber(
+    accountNumber: string,
+    lang: string = 'fr'
+  ): Promise<{ message: string; data: any }> {
+    console.log(`[getAccountByNumber] Langue utilisée : ${lang} pour le compte ${accountNumber}`);
+
+    if (!accountNumber) {
+      throw new RpcException({
+        status: 'error',
+        message: 'Account number is required',
+        statusCode: 400,
+      });
+    }
+
+    // Récupérer le compte par son numéro
+    const account = await this.prisma.account.findFirst({
+      where: { accountNumber: accountNumber },
+      include: {
+        clients: {
+          select: {
+            id: true,
+            clientId: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            address: true,
+            city: true,
+            country: true,
+            status: true,
+            kycLevel: true,
+            profilePicture: true,
+          },
+        },
+      },
+    });
+
+    if (!account) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('account_not_found', lang),
+        statusCode: 404,
+      });
+    }
+
+    // Récupérer l'utilisateur lié à ce compte
+    const user = await this.prisma.user.findFirst({
+      where: { clientId: account.clientId },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        photo: true,
+        preferredLanguage: true,
+        preferredCurrency: true,
+        timezone: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    // ✅ RÉPONSE SIMPLIFIÉE
+    return {
+      message: this.i18nService.translate('account_retrieved', lang),
+      data: {
+        id: account.id,
+        clientId: account.clientId,
+        accountNumber: account.accountNumber,
+        accountType: account.accountType,
+        balance: account.balance,
+        currency: account.currency,
+        status: account.status,
+        isMain: account.isMain,
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt,
+        client: account.clients ? {
+          id: account.clients.id,
+          clientId: account.clients.clientId,
+          firstName: account.clients.firstName,
+          lastName: account.clients.lastName,
+          fullName: `${account.clients.firstName || ''} ${account.clients.lastName || ''}`.trim(),
+          email: account.clients.email,
+          phone: account.clients.phone,
+          address: account.clients.address,
+          city: account.clients.city,
+          country: account.clients.country,
+          status: account.clients.status,
+          kycLevel: account.clients.kycLevel,
+          profilePicture: account.clients.profilePicture,
+        } : null,
+        user: user ? {
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+          role: user.role,
+          status: user.status,
+          photo: user.photo,
+          preferredLanguage: user.preferredLanguage,
+          preferredCurrency: user.preferredCurrency,
+          timezone: user.timezone,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        } : null,
+      },
+    };
+  }
   // ========================= HEALTH CHECK =========================
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };

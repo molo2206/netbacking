@@ -1779,6 +1779,26 @@ export class ApiGatewayController {
     );
   }
 
+  @Get('accounts/:accountNumber')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getAccountByNumber(
+    @Param('accountNumber') accountNumber: string,
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendUserMessage(
+      'get_account_by_number',
+      { accountNumber, lang },
+      'Failed to get account',
+      HttpStatus.NOT_FOUND
+    );
+  }
   // ==================== HEALTH CHECK ====================
 
   @Get('health')

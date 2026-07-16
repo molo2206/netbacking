@@ -480,6 +480,21 @@ export class UserServiceController {
       });
     }
   }
+
+  @MessagePattern('get_account_by_number')
+  async getAccountByNumber(@Payload() data: { accountNumber: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    try {
+      return await this.userService.getAccountByNumber(data.accountNumber, lang);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get account',
+        statusCode: 500,
+      });
+    }
+  }
   @MessagePattern('health_check')
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };
