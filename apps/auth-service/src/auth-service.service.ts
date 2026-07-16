@@ -111,6 +111,8 @@ export class AuthServiceService {
 
   // apps/auth-service/src/auth-service.service.ts
 
+  // apps/auth-service/src/auth-service.service.ts
+
   async register(data: RegisterDto, ipAddress?: string) {
     const clientId = data.clientId;
     const lang = data.lang || 'fr';
@@ -268,13 +270,27 @@ export class AuthServiceService {
       const plainPassword = data.password;
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
+      // ✅ Récupérer les valeurs par défaut pour phone et email
+      const finalPhone = clientInfo?.phone || data.phone || phone; // Utiliser le téléphone du client ou celui fourni
+      const finalEmail = clientInfo?.email || data.email || null;
+
+      // ✅ Construire firstName et lastName
+      let firstName = data.firstName || 'User';
+      let lastName = data.lastName || clientId;
+
+      if (clientInfo?.fullName) {
+        const nameParts = clientInfo.fullName.split(' ');
+        firstName = data.firstName || nameParts[0] || 'User';
+        lastName = data.lastName || nameParts.slice(1).join(' ') || clientId;
+      }
+
       const userData = {
         id: crypto.randomUUID(),
-        email: clientInfo?.email || data.email || null,
-        phone: clientInfo?.phone || data.phone || null,
+        email: finalEmail,
+        phone: finalPhone, // ✅ Toujours une string, jamais null
         password: hashedPassword,
-        firstName: data.firstName || clientInfo?.fullName?.split(' ')[0] || 'User',
-        lastName: data.lastName || clientInfo?.fullName?.split(' ').slice(1).join(' ') || clientId,
+        firstName: firstName,
+        lastName: lastName,
         role: UserRole.USER,
         status: users_status.ACTIVE,
         clientId: clientId,
@@ -451,7 +467,7 @@ export class AuthServiceService {
         data: {
           id: user.id,
           email: user.email || null,
-          phone: user.phone || null,
+          phone: user.phone,
           full_name: `${user.firstName} ${user.lastName}`,
           role: user.role,
           status: user.status,
