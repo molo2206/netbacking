@@ -1638,56 +1638,10 @@ export class UserServiceService {
       });
     }
 
-    // 3. Récupérer les informations du client
-    let clientInfo: any = null;
-    if (user.clientId) {
-      const client = await this.prisma.clients.findUnique({
-        where: { clientId: user.clientId },
-        select: {
-          fullName: true,
-          email: true,
-          phone: true,
-          status: true,
-          kycLevel: true,
-        },
-      });
-
-      if (client) {
-        clientInfo = {
-          fullName: client.fullName,
-          email: client.email,
-          phone: client.phone,
-          status: client.status,
-          kycLevel: client.kycLevel,
-        };
-      }
-    }
-
+    // ✅ Retourner uniquement les comptes dans data
     return {
       message: this.i18nService.translate('user_accounts_retrieved', lang),
-      data: {
-        user: {
-          id: user.id,
-          clientId: user.clientId,
-          email: user.email,
-          phone: user.phone,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          fullName: `${user.firstName} ${user.lastName}`,
-        },
-        client: clientInfo,
-        accounts: accounts,
-        total: accounts.length,
-        summary: {
-          totalBalance: accounts.reduce((sum, acc) => sum + (acc.balance?.toNumber() || 0), 0),
-          currencies: [...new Set(accounts.map(acc => acc.currency))],
-          types: {
-            courant: accounts.filter(a => a.accountType === 'COURANT').length,
-            epargne: accounts.filter(a => a.accountType === 'EPARGNE').length,
-            premium: accounts.filter(a => a.accountType === 'PREMIUM').length,
-          },
-        },
-      },
+      data: accounts,
     };
   }
   // ========================= HEALTH CHECK =========================
