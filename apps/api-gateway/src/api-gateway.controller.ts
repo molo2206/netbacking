@@ -172,39 +172,44 @@ export class ApiGatewayController {
     @Body() body: any,
     @Headers('lang') langHeader?: string,
     @Headers('user-agent') userAgent?: string,
-    @Headers('x-client') clientHeader?: string, // ✅ Ajouter le header x-client
+    @Headers('x-client') clientHeader?: string,
   ) {
     const lang = langHeader || 'fr';
 
-    if (!body.phone) {
-      throw new HttpException('Phone is required', HttpStatus.BAD_REQUEST);
+    // ✅ Vérifier les champs requis (clientId et password sont obligatoires)
+    if (!body.clientId) {
+      throw new HttpException('ClientId is required', HttpStatus.BAD_REQUEST);
     }
     if (!body.password) {
       throw new HttpException('Password is required', HttpStatus.BAD_REQUEST);
-    }
-    if (!body.firstName) {
-      throw new HttpException('First name is required', HttpStatus.BAD_REQUEST);
-    }
-    if (!body.lastName) {
-      throw new HttpException('Last name is required', HttpStatus.BAD_REQUEST);
     }
 
     // ✅ Déterminer la plateforme depuis le header x-client
     const platform = clientHeader || body.platform || 'WEB';
 
+    // ✅ Construire le payload
+    const payload = {
+      clientId: body.clientId,
+      password: body.password,
+      otpCode: body.otpCode || '', // ✅ otpCode optionnel
+      fcmToken: body.fcmToken || null,
+      phone: body.phone || null,
+      email: body.email || null,
+      firstName: body.firstName || null,
+      lastName: body.lastName || null,
+      platform: platform,
+      deviceInfo: body.deviceInfo || userAgent || 'unknown',
+      referralCode: body.referralCode || null,
+      lang: lang,
+    };
+
     return this.sendAuthMessage(
       'auth.register',
-      {
-        ...body,
-        lang,
-        platform, // ✅ Passer la plateforme dans le payload
-        deviceInfo: body.deviceInfo || userAgent || 'unknown',
-      },
+      payload,
       'Registration failed',
       HttpStatus.BAD_REQUEST
     );
   }
-
   @Post('auth/login')
   async login(
     @Body() body: any,

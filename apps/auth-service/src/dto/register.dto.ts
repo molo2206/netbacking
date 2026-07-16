@@ -2,31 +2,31 @@
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, IsPhoneNumber } from 'class-validator';
 
 export class RegisterDto {
-  
+
   @IsOptional()
   @IsString()
   email?: string;
 
-  @IsPhoneNumber(undefined, { message: 'Invalid phone number' })
-  @IsNotEmpty({ message: 'Phone number is required' })
-  phone!: string;
+  @IsOptional()
+  @IsString()
+  phone?: string;  // ✅ Rendre optionnel
 
   @IsString()
   @IsNotEmpty({ message: 'Password is required' })
   @MinLength(6, { message: 'Password must be at least 6 characters long' })
   password!: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty({ message: 'First name is required' })
-  firstName!: string;
-
-  @IsString()
-  @IsNotEmpty({ message: 'Last name is required' })
-  lastName!: string;
+  firstName?: string;  // ✅ Rendre optionnel
 
   @IsOptional()
   @IsString()
-  clientId?: string;
+  lastName?: string;   // ✅ Rendre optionnel
+
+  @IsNotEmpty({ message: 'ClientId is required' })
+  @IsString()
+  clientId!: string;   // ✅ Rendre requis
 
   @IsOptional()
   @IsString()

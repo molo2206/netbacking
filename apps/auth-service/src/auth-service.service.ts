@@ -107,17 +107,22 @@ export class AuthServiceService {
   }
 
   // ==================== REGISTER ====================
+  // apps/auth-service/src/auth-service.service.ts
+
+  // apps/auth-service/src/auth-service.service.ts
+
   async register(data: RegisterDto, ipAddress?: string) {
-    const phone = this.normalizePhone(data.phone);
+    const clientId = data.clientId;
     const lang = data.lang || 'fr';
 
     console.log('[AuthService] Register received:', {
-      phone,
+      clientId,
       hasOtpCode: !!data.otpCode,
       email: data.email,
+      platform: data.platform || 'WEB',
     });
 
-    const key = `${data.clientId || ''}-${phone}`;
+    const key = `${clientId}`;
     if (registerLocks.get(key)) {
       throw new BadRequestException(
         this.i18nService.translate('request_in_progress', lang),
@@ -126,10 +131,13 @@ export class AuthServiceService {
     registerLocks.set(key, true);
 
     try {
-      // Vérifier user existant
+      // ✅ Vérifier si le clientId existe déjà
       const existingUser = await this.prisma.user.findFirst({
         where: {
-          OR: [{ phone: data.phone }],
+          OR: [
+            { clientId: clientId },
+            { phone: data.phone || undefined }
+          ],
         },
       });
 
@@ -139,40 +147,38 @@ export class AuthServiceService {
         );
       }
 
-      // ✅ Vérifier si le clientId existe
-      let finalClientId: string;
+      // ✅ Vérifier si le compte existe et récupérer les infos du client
+      const existingAccount = await this.prisma.account.findFirst({
+        where: { clientId: clientId },
+        include: {
+          clients: true,
+        },
+      });
 
-      if (data.clientId) {
-        const existingAccount = await this.prisma.account.findFirst({
-          where: { clientId: data.clientId },
-        });
-
-        if (!existingAccount) {
-          throw new BadRequestException(
-            `Le clientId ${data.clientId} n'existe pas. Veuillez fournir un clientId valide.`,
-          );
-        }
-
-        finalClientId = data.clientId;
-      } else {
+      if (!existingAccount) {
         throw new BadRequestException(
-          'Le clientId est requis pour l\'inscription.',
+          `Le clientId ${clientId} n'existe pas. Veuillez fournir un clientId valide.`,
         );
       }
 
-      // OTP
+      const clientInfo = existingAccount.clients;
+
+      // ✅ Gestion OTP
       const otpProvided = data.otpCode && data.otpCode.trim() !== '';
 
+      // ✅ SI OTP EST VIDE OU NON FOURNI → ENVOYER OTP
       if (!otpProvided) {
+        // Désactiver anciens OTP
         await this.prisma.otp.updateMany({
           where: {
-            email: phone,
+            email: clientInfo?.phone || data.phone || clientId,
             isUsed: false,
             expiresAt: { gt: new Date() },
           },
           data: { isUsed: true },
         });
 
+        // Générer nouveau OTP
         const newOtpCode = Math.floor(
           100000 + Math.random() * 900000,
         ).toString();
@@ -180,29 +186,32 @@ export class AuthServiceService {
         await this.prisma.otp.create({
           data: {
             id: crypto.randomUUID(),
-            email: phone,
+            email: clientInfo?.phone || data.phone || clientId,
             otpCode: newOtpCode,
             expiresAt: new Date(Date.now() + 10 * 60 * 1000),
             isUsed: false,
           },
         });
 
-        // SMS OTP
-        try {
-          const smsText = this.i18nService.translate('otp_sms', lang, {
-            otpCode: newOtpCode,
-          });
-          await this.smsService.sendSms(phone, smsText);
-        } catch (err) {
-          console.error('Erreur SMS OTP:', err);
+        // ✅ SMS OTP
+        const clientPhone = clientInfo?.phone || data.phone;
+        if (clientPhone) {
+          try {
+            const smsText = this.i18nService.translate('otp_sms', lang, {
+              otpCode: newOtpCode,
+            });
+            await this.smsService.sendSms(clientPhone, smsText);
+          } catch (err) {
+            console.error('Erreur SMS OTP:', err);
+          }
         }
 
-        // EMAIL OTP
-        const emailTarget = data.email;
-        if (emailTarget) {
+        // ✅ EMAIL OTP
+        const clientEmail = clientInfo?.email || data.email;
+        if (clientEmail) {
           try {
             await this.mailService.sendHtmlEmail(
-              emailTarget,
+              clientEmail,
               this.i18nService.translate('email_otp_title', lang),
               'otp-email.html',
               {
@@ -219,11 +228,11 @@ export class AuthServiceService {
                 copyright: this.i18nService.translate('email_otp_copyright', lang, {
                   year: new Date().getFullYear(),
                 }),
-                email: emailTarget,
+                email: clientEmail,
               },
             );
           } catch (err) {
-            console.error(`Erreur email OTP à ${emailTarget}:`, err);
+            console.error(`Erreur email OTP à ${clientEmail}:`, err);
           }
         }
 
@@ -233,12 +242,13 @@ export class AuthServiceService {
         };
       }
 
-      // Vérifier OTP
+      // ✅ SI OTP EST FOURNI → VÉRIFIER ET CRÉER L'UTILISATEUR
       const otpRecord = await this.prisma.otp.findFirst({
         where: {
-          email: phone,
+          email: clientInfo?.phone || data.phone || clientId,
           otpCode: data.otpCode,
           isUsed: false,
+          expiresAt: { gt: new Date() },
         },
       });
 
@@ -254,47 +264,47 @@ export class AuthServiceService {
         );
       }
 
-      // Création user
-      let plainPassword = 'Accespay!26';
-      if (data.password && data.password.trim().length >= 8) {
-        plainPassword = data.password;
-      }
-
+      // ✅ CRÉER L'UTILISATEUR
+      const plainPassword = data.password;
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
+      const userData = {
+        id: crypto.randomUUID(),
+        email: clientInfo?.email || data.email || null,
+        phone: clientInfo?.phone || data.phone || null,
+        password: hashedPassword,
+        firstName: data.firstName || clientInfo?.fullName?.split(' ')[0] || 'User',
+        lastName: data.lastName || clientInfo?.fullName?.split(' ').slice(1).join(' ') || clientId,
+        role: UserRole.USER,
+        status: users_status.ACTIVE,
+        clientId: clientId,
+        platform: data.platform || 'WEB',
+        ...(data.referralCode && {
+          referredBy: data.referralCode,
+        }),
+      };
+
       const user = await this.prisma.user.create({
-        data: {
-          id: crypto.randomUUID(),
-          email: data.email,
-          phone: data.phone,
-          password: hashedPassword,
-          firstName: data.firstName,
-          lastName: data.lastName,
-          role: UserRole.USER,
-          status: users_status.ACTIVE,
-          clientId: finalClientId,
-          platform: data.platform || null,
-          ...(data.referralCode && {
-            referredBy: data.referralCode,
-          }),
-        },
+        data: userData,
       });
 
-      console.log(`[Account] ClientId ${finalClientId} lié à l'utilisateur ${user.id}`);
+      console.log(`[Account] ClientId ${clientId} lié à l'utilisateur ${user.id}`);
 
+      // Marquer OTP utilisé
       await this.prisma.otp.update({
         where: { id: otpRecord.id },
         data: { isUsed: true },
       });
 
+      // Audit
       await this.logAudit(
         user.id,
         'REGISTER',
-        { identifier: user, clientId: finalClientId },
+        { identifier: user, clientId: clientId },
         ipAddress ?? null,
       );
 
-      // FCM Token
+      // ✅ FCM Token - Optionnel
       if (data.fcmToken && data.fcmToken.trim()) {
         try {
           await this.prisma.device.upsert({
@@ -302,7 +312,7 @@ export class AuthServiceService {
             update: {
               userId: user.id,
               deviceName: data.deviceInfo || 'unknown',
-              deviceType: data.platform || 'unknown',
+              deviceType: data.platform || 'WEB',
               updatedAt: new Date(),
             },
             create: {
@@ -310,7 +320,7 @@ export class AuthServiceService {
               userId: user.id,
               deviceId: data.fcmToken,
               deviceName: data.deviceInfo || 'unknown',
-              deviceType: data.platform || 'unknown',
+              deviceType: data.platform || 'WEB',
               createdAt: new Date(),
               updatedAt: new Date(),
             },
@@ -320,38 +330,42 @@ export class AuthServiceService {
         }
       }
 
-      // SMS Bienvenue
-      try {
-        const welcomeSms = this.i18nService.translate('welcome_sms', lang, {
-          full_name: user.firstName + ' ' + user.lastName,
-          account_number: finalClientId,
-          phone: phone,
-          password: plainPassword,
-        });
-        await this.smsService.sendSms(phone, welcomeSms);
-      } catch (err) {
-        console.error('Erreur SMS bienvenue:', err);
+      // ✅ SMS BIENVENUE
+      const clientPhone = clientInfo?.phone || user.phone;
+      if (clientPhone) {
+        try {
+          const welcomeSms = this.i18nService.translate('welcome_sms', lang, {
+            full_name: clientInfo?.fullName || `${user.firstName} ${user.lastName}`,
+            account_number: clientId,
+            phone: clientPhone,
+            password: plainPassword,
+          });
+          await this.smsService.sendSms(clientPhone, welcomeSms);
+        } catch (err) {
+          console.error('Erreur SMS bienvenue:', err);
+        }
       }
 
-      // EMAIL Bienvenue
-      if (user.email) {
+      // ✅ EMAIL BIENVENUE
+      const clientEmail = clientInfo?.email || user.email;
+      if (clientEmail) {
         try {
           await this.mailService.sendHtmlEmail(
-            user.email,
+            clientEmail,
             this.i18nService.translate('email_welcome_title', lang),
             'welcome-email.html',
             {
               title: this.i18nService.translate('email_welcome_title', lang),
               greeting: this.i18nService.translate('email_welcome_greeting', lang, {
-                full_name: user.firstName + ' ' + user.lastName,
+                full_name: clientInfo?.fullName || `${user.firstName} ${user.lastName}`,
               }),
               message: this.i18nService.translate('email_welcome_message', lang),
               credentials_label: this.i18nService.translate('email_welcome_credentials', lang),
               phone_label: this.i18nService.translate('email_welcome_phone', lang, {
-                phone: user.phone,
+                phone: clientPhone,
               }),
               account_label: this.i18nService.translate('email_welcome_account', lang, {
-                account_number: finalClientId,
+                account_number: clientId,
               }),
               password_label: this.i18nService.translate('email_welcome_password', lang, {
                 defaultPassword: plainPassword,
@@ -361,7 +375,7 @@ export class AuthServiceService {
               copyright: this.i18nService.translate('email_otp_copyright', lang, {
                 year: new Date().getFullYear(),
               }),
-              email: user.email,
+              email: clientEmail,
             },
           );
         } catch (err) {
@@ -369,7 +383,7 @@ export class AuthServiceService {
         }
       }
 
-      // Générer les tokens JWT
+      // ✅ Générer les tokens JWT
       const userRole = user.role || UserRole.USER;
       const tokens = this.generateJwtTokens(user.id, user.email || null, userRole);
 
@@ -392,7 +406,7 @@ export class AuthServiceService {
         },
       });
 
-      // Récupérer toutes les sessions actives
+      // Récupérer les sessions actives
       const sessions = await this.prisma.session.findMany({
         where: {
           userId: user.id,
@@ -402,7 +416,6 @@ export class AuthServiceService {
         orderBy: { createdAt: 'desc' },
       });
 
-      // Formatage unifié des sessions
       const formattedSessions = sessions.map(session => ({
         id: session.id,
         device_info: session.userAgent,
@@ -429,7 +442,7 @@ export class AuthServiceService {
         });
       }
 
-      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE LOGIN
+      // ✅ RÉPONSE
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -438,7 +451,7 @@ export class AuthServiceService {
         data: {
           id: user.id,
           email: user.email || null,
-          phone: user.phone,
+          phone: user.phone || null,
           full_name: `${user.firstName} ${user.lastName}`,
           role: user.role,
           status: user.status,
