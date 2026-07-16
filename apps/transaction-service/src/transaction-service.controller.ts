@@ -5,29 +5,60 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload, RpcException } from '@nestjs/microservices';
 import { TransactionServiceService } from './transaction-service.service';
-import { 
-  TransferDto, 
-  DepositDto, 
+import {
+  TransferDto,
+  DepositDto,
   WithdrawDto,
 } from '../dto/create-transaction.dto';
 import { transactions_status, transactions_type } from '@prisma/client';
 
 @Controller()
 export class TransactionServiceController {
-  constructor(private readonly transactionService: TransactionServiceService) {}
+  constructor(private readonly transactionService: TransactionServiceService) { }
 
   // ==================== TRANSFERT ====================
 
   @MessagePattern('transaction.transfer')
   async transfer(@Payload() data: TransferDto & { lang?: string }) {
     try {
-      return await this.transactionService.transfer(data);
+      // ✅ S'assurer que initiatedBy est présent
+      if (!data.initiatedBy) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User not authenticated',
+          statusCode: 401,
+        });
+      }
+
+      // Appeler le service
+      const result = await this.transactionService.transfer({
+        senderAccountId: data.senderAccountId,
+        receiverAccountId: data.receiverAccountId,
+        receiverName: data.receiverName,
+        receiverPhone: data.receiverPhone,
+        receiverEmail: data.receiverEmail,
+        amount: data.amount,
+        fees: data.fees,
+        description: data.description,
+        currency: data.currency,
+        type: data.type,
+        platform: data.platform,
+        initiatedBy: data.initiatedBy, // ✅ Maintenant défini
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Transfert effectué avec succès',
+        data: result.data,
+      };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] Transfer error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Transfer failed',
-        statusCode: 500,
+        statusCode: error.statusCode || 500,
       });
     }
   }
@@ -67,9 +98,9 @@ export class TransactionServiceController {
   // ==================== RELEVÉ DE COMPTE ====================
 
   @MessagePattern('transaction.getStatement')
-  async getAccountStatement(@Payload() data: { 
-    accountId: string; 
-    startDate?: string; 
+  async getAccountStatement(@Payload() data: {
+    accountId: string;
+    startDate?: string;
     endDate?: string;
     page?: number;
     limit?: number;
@@ -80,7 +111,7 @@ export class TransactionServiceController {
     try {
       const startDate = data.startDate ? new Date(data.startDate) : undefined;
       const endDate = data.endDate ? new Date(data.endDate) : undefined;
-      
+
       return await this.transactionService.getAccountStatement(data.accountId, {
         startDate,
         endDate,
@@ -117,9 +148,9 @@ export class TransactionServiceController {
   }
 
   @MessagePattern('transaction.getByAccount')
-  async getTransactionsByAccount(@Payload() data: { 
-    accountId: string; 
-    page?: number; 
+  async getTransactionsByAccount(@Payload() data: {
+    accountId: string;
+    page?: number;
     limit?: number;
     type?: transactions_type;
     status?: transactions_status;
@@ -144,9 +175,9 @@ export class TransactionServiceController {
   }
 
   @MessagePattern('transaction.getByClient')
-  async getTransactionsByClient(@Payload() data: { 
-    clientId: string; 
-    page?: number; 
+  async getTransactionsByClient(@Payload() data: {
+    clientId: string;
+    page?: number;
     limit?: number;
     type?: transactions_type;
     status?: transactions_status;
@@ -187,9 +218,9 @@ export class TransactionServiceController {
   }
 
   @MessagePattern('transaction.getTransfersByAccount')
-  async getTransfersByAccount(@Payload() data: { 
-    accountId: string; 
-    page?: number; 
+  async getTransfersByAccount(@Payload() data: {
+    accountId: string;
+    page?: number;
     limit?: number;
     lang?: string;
   }) {
@@ -210,9 +241,9 @@ export class TransactionServiceController {
   }
 
   @MessagePattern('transaction.getTransfersByUser')
-  async getTransfersByUser(@Payload() data: { 
-    userId: string; 
-    page?: number; 
+  async getTransfersByUser(@Payload() data: {
+    userId: string;
+    page?: number;
     limit?: number;
     lang?: string;
   }) {
@@ -235,14 +266,14 @@ export class TransactionServiceController {
   // ==================== STATISTIQUES ====================
 
   @MessagePattern('transaction.getStats')
-  async getTransactionStats(@Payload() data: { 
-    userId: string; 
+  async getTransactionStats(@Payload() data: {
+    userId: string;
     days?: number;
     lang?: string;
   }) {
     try {
       return await this.transactionService.getTransactionStats(
-        data.userId, 
+        data.userId,
         data.days || 30,
         data.lang,
       );

@@ -125,10 +125,11 @@ export class TransactionServiceService {
 
   // ========================= TRANSFERT =========================
 
+  // apps/transaction-service/src/transaction.service.ts
   async transfer(data: {
     senderAccountId: string;
     receiverAccountId: string;
-    receiverName: string;
+    receiverName?: string;
     receiverPhone?: string;
     receiverEmail?: string;
     amount: number;
@@ -136,14 +137,16 @@ export class TransactionServiceService {
     description?: string;
     currency?: string;
     type?: transfers_type;
-    initiatedBy: string;
     platform?: transfers_platform;
+    initiatedBy: string;
     lang?: string;
   }) {
     const lang = data.lang || 'fr';
 
     try {
-      // 1. Vérifier que les comptes existent
+      // ==========================================
+      // 1. VÉRIFIER QUE LES COMPTES EXISTENT
+      // ==========================================
       const senderAccount = await this.prisma.account.findUnique({
         where: { id: data.senderAccountId },
         include: { clients: true },
@@ -186,9 +189,28 @@ export class TransactionServiceService {
         });
       }
 
-      // 2. Vérifier le solde de l'émetteur
+      // ==========================================
+      // 2. DÉTERMINER LA DEVIZE
+      // ==========================================
+      const currency = data.currency || senderAccount.currency || 'XAF';
+
+      // ==========================================
+      // 3. VÉRIFIER LA COMPATIBILITÉ DES DEVIZES
+      // ==========================================
+      if (senderAccount.currency !== receiverAccount.currency) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('transfer_currency_mismatch', lang),
+          statusCode: 400,
+        });
+      }
+
+      // ==========================================
+      // 4. VÉRIFIER LE SOLDE DE L'ÉMETTEUR
+      // ==========================================
       const senderBalance = senderAccount.balance?.toNumber() || 0;
-      const totalAmount = data.amount + (data.fees || 0);
+      const fees = data.fees || 0;
+      const totalAmount = data.amount + fees;
 
       if (senderBalance < totalAmount) {
         throw new RpcException({
@@ -198,23 +220,35 @@ export class TransactionServiceService {
         });
       }
 
-      // 3. Générer la référence
+      // ==========================================
+      // 5. GÉNÉRER LA RÉFÉRENCE
+      // ==========================================
       const reference = this.generateTransferReference();
 
-      // 4. Créer le transfert
+      // ==========================================
+      // 6. RÉCUPÉRER LE NOM DU DESTINATAIRE
+      // ==========================================
+      let receiverName = data.receiverName;
+      if (!receiverName && receiverAccount.clients) {
+        receiverName = receiverAccount.clients.fullName || 'Unknown';
+      }
+
+      // ==========================================
+      // 7. CRÉER LE TRANSFERT
+      // ==========================================
       const transfer = await this.prisma.transfer.create({
         data: {
           id: crypto.randomUUID(),
           reference,
           senderAccountId: data.senderAccountId,
           receiverAccountId: data.receiverAccountId,
-          receiverName: data.receiverName,
+          receiverName: receiverName || 'Unknown',
           receiverPhone: data.receiverPhone,
           receiverEmail: data.receiverEmail,
           amount: new Decimal(data.amount),
-          fees: data.fees ? new Decimal(data.fees) : new Decimal(0),
+          fees: new Decimal(fees),
           totalAmount: new Decimal(totalAmount),
-          currency: data.currency || 'XAF',
+          currency: currency,
           platform: data.platform || transfers_platform.WEB,
           type: data.type || transfers_type.INTERNAL,
           status: transfers_status.PENDING,
@@ -223,13 +257,18 @@ export class TransactionServiceService {
         },
       });
 
-      // 5. Traiter le transfert (débit crédit)
+      // ==========================================
+      // 8. CALCULER LES NOUVEAUX SOLDES
+      // ==========================================
       const newSenderBalance = senderBalance - totalAmount;
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
-      // 6. Mettre à jour les comptes
+      // ==========================================
+      // 9. TRANSACTION PRISMA (ATOMIQUE)
+      // ==========================================
       const [senderTx, receiverTx] = await this.prisma.$transaction([
+        // Mettre à jour le compte de l'émetteur (débit)
         this.prisma.account.update({
           where: { id: data.senderAccountId },
           data: {
@@ -237,6 +276,8 @@ export class TransactionServiceService {
             updatedAt: new Date(),
           },
         }),
+
+        // Mettre à jour le compte du destinataire (crédit)
         this.prisma.account.update({
           where: { id: data.receiverAccountId },
           data: {
@@ -244,6 +285,7 @@ export class TransactionServiceService {
             updatedAt: new Date(),
           },
         }),
+
         // Créer la transaction pour l'émetteur (débit)
         this.prisma.transaction.create({
           data: {
@@ -255,10 +297,11 @@ export class TransactionServiceService {
             balanceBefore: new Decimal(senderBalance),
             balanceAfter: new Decimal(newSenderBalance),
             reference: `DEBIT-${reference}`,
-            description: `Transfer to ${data.receiverName}`,
+            description: `Transfer to ${receiverName || 'Unknown'}`,
             status: transactions_status.COMPLETED,
           },
         }),
+
         // Créer la transaction pour le destinataire (crédit)
         this.prisma.transaction.create({
           data: {
@@ -274,6 +317,7 @@ export class TransactionServiceService {
             status: transactions_status.COMPLETED,
           },
         }),
+
         // Mettre à jour le statut du transfert
         this.prisma.transfer.update({
           where: { id: transfer.id },
@@ -284,7 +328,9 @@ export class TransactionServiceService {
         }),
       ]);
 
-      // 7. Audit
+      // ==========================================
+      // 10. AUDIT
+      // ==========================================
       await this.logAudit(
         data.initiatedBy,
         'TRANSFER',
@@ -292,14 +338,17 @@ export class TransactionServiceService {
           from: data.senderAccountId,
           to: data.receiverAccountId,
           amount: data.amount,
-          fees: data.fees || 0,
+          fees: fees,
           reference,
+          currency,
         },
         'TRANSFER',
         transfer.id,
       );
 
-      // 8. Récupérer le transfert complet
+      // ==========================================
+      // 11. RÉCUPÉRER LE TRANSFERT COMPLET
+      // ==========================================
       const completedTransfer = await this.prisma.transfer.findUnique({
         where: { id: transfer.id },
         include: {
@@ -318,7 +367,17 @@ export class TransactionServiceService {
         },
       });
 
-      // 9. Notifications
+      if (!completedTransfer) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('transfer_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // ==========================================
+      // 12. NOTIFICATIONS (Optionnel)
+      // ==========================================
       try {
         // Notification pour l'émetteur
         const senderLang = await this.getUserLanguage(data.initiatedBy);
@@ -327,17 +386,17 @@ export class TransactionServiceService {
           NotificationType.TRANSFER_SENT,
           {
             amount: data.amount,
-            fees: data.fees || 0,
-            receiverName: data.receiverName,
+            fees: fees,
+            receiverName: receiverName || 'Unknown',
             reference: reference,
-            currency: data.currency || 'XAF',
+            currency: currency,
           },
           'TRANSFER',
           transfer.id,
           senderLang,
         );
 
-        // Notification pour le destinataire (si c'est un utilisateur)
+        // Notification pour le destinataire
         if (receiverAccount.clients?.clientId) {
           const receiverUser = await this.prisma.user.findFirst({
             where: { clientId: receiverAccount.clients.clientId },
@@ -351,7 +410,7 @@ export class TransactionServiceService {
                 amount: data.amount,
                 senderName: senderAccount.clients?.fullName || 'Unknown',
                 reference: reference,
-                currency: data.currency || 'XAF',
+                currency: currency,
               },
               'TRANSFER',
               transfer.id,
@@ -359,35 +418,39 @@ export class TransactionServiceService {
             );
           }
         }
-
-        // SMS pour l'émetteur
-        const senderSmsEnabled = await this.shouldSendSms(data.initiatedBy);
-        if (senderSmsEnabled) {
-          const senderUser = await this.prisma.user.findUnique({
-            where: { id: data.initiatedBy },
-            select: { phone: true, firstName: true, lastName: true },
-          });
-          if (senderUser?.phone) {
-            const smsText = this.i18nService.translate('transfer_sender_sms', senderLang, {
-              full_name: `${senderUser.firstName} ${senderUser.lastName}`,
-              amount: data.amount,
-              receiverName: data.receiverName,
-              reference: reference,
-            });
-            await this.smsService.sendSms(senderUser.phone, smsText);
-          }
-        }
       } catch (notifError) {
         console.error('[Notifications] Transfer notification error:', notifError);
       }
 
+      // ==========================================
+      // 13. RETOURNER LA RÉPONSE FORMATÉE
+      // ==========================================
       return {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
-        data: completedTransfer,
+        data: {
+          transferId: completedTransfer.id,
+          reference: completedTransfer.reference,
+          senderAccountId: completedTransfer.senderAccountId,
+          receiverAccountId: completedTransfer.receiverAccountId,
+          receiverName: completedTransfer.receiverName,
+          amount: completedTransfer.amount,
+          fees: completedTransfer.fees,
+          totalAmount: completedTransfer.totalAmount,
+          currency: completedTransfer.currency,
+          status: completedTransfer.status,
+          description: completedTransfer.description,
+          createdAt: completedTransfer.createdAt,
+          senderBalance: newSenderBalance,
+          receiverBalance: newReceiverBalance,
+        },
       };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+
+      // Logger l'erreur pour le débogage
+      console.error('[Transfer] Error:', error);
+
       throw new RpcException({
         status: 'error',
         message: error.message || this.i18nService.translate('transfer_failed', lang),
@@ -395,7 +458,6 @@ export class TransactionServiceService {
       });
     }
   }
-
   // ========================= DÉPÔT =========================
 
   async deposit(data: {
@@ -783,9 +845,84 @@ export class TransactionServiceService {
       });
     }
 
-    return transaction;
+    // ✅ Formater la réponse dans data
+    return {
+      success: true,
+      message: this.i18nService.translate('transaction_retrieved', lang),
+      data: {
+        id: transaction.id,
+        transferId: transaction.transferId,
+        accountId: transaction.accountId,
+        type: transaction.type,
+        status: transaction.status,
+        amount: transaction.amount,
+        balanceBefore: transaction.balanceBefore,
+        balanceAfter: transaction.balanceAfter,
+        reference: transaction.reference,
+        description: transaction.description,
+        createdAt: transaction.createdAt,
+        account: transaction.account ? {
+          id: transaction.account.id,
+          clientId: transaction.account.clientId,
+          accountType: transaction.account.accountType,
+          currency: transaction.account.currency,
+          status: transaction.account.status,
+          client: transaction.account.clients ? {
+            id: transaction.account.clients.id,
+            clientId: transaction.account.clients.clientId,
+            fullName: transaction.account.clients.fullName,
+            email: transaction.account.clients.email,
+            phone: transaction.account.clients.phone,
+          } : null,
+        } : null,
+        transfer: transaction.transfer ? {
+          id: transaction.transfer.id,
+          reference: transaction.transfer.reference,
+          senderAccountId: transaction.transfer.senderAccountId,
+          receiverAccountId: transaction.transfer.receiverAccountId,
+          receiverName: transaction.transfer.receiverName,
+          receiverPhone: transaction.transfer.receiverPhone,
+          receiverEmail: transaction.transfer.receiverEmail,
+          amount: transaction.transfer.amount,
+          fees: transaction.transfer.fees,
+          totalAmount: transaction.transfer.totalAmount,
+          currency: transaction.transfer.currency,
+          status: transaction.transfer.status,
+          description: transaction.transfer.description,
+          createdAt: transaction.transfer.createdAt,
+          completedAt: transaction.transfer.completedAt,
+          senderAccount: transaction.transfer.senderAccount ? {
+            id: transaction.transfer.senderAccount.id,
+            clientId: transaction.transfer.senderAccount.clientId,
+            accountType: transaction.transfer.senderAccount.accountType,
+            currency: transaction.transfer.senderAccount.currency,
+            status: transaction.transfer.senderAccount.status,
+            client: transaction.transfer.senderAccount.clients ? {
+              id: transaction.transfer.senderAccount.clients.id,
+              clientId: transaction.transfer.senderAccount.clients.clientId,
+              fullName: transaction.transfer.senderAccount.clients.fullName,
+              email: transaction.transfer.senderAccount.clients.email,
+              phone: transaction.transfer.senderAccount.clients.phone,
+            } : null,
+          } : null,
+          receiverAccount: transaction.transfer.receiverAccount ? {
+            id: transaction.transfer.receiverAccount.id,
+            clientId: transaction.transfer.receiverAccount.clientId,
+            accountType: transaction.transfer.receiverAccount.accountType,
+            currency: transaction.transfer.receiverAccount.currency,
+            status: transaction.transfer.receiverAccount.status,
+            client: transaction.transfer.receiverAccount.clients ? {
+              id: transaction.transfer.receiverAccount.clients.id,
+              clientId: transaction.transfer.receiverAccount.clients.clientId,
+              fullName: transaction.transfer.receiverAccount.clients.fullName,
+              email: transaction.transfer.receiverAccount.clients.email,
+              phone: transaction.transfer.receiverAccount.clients.phone,
+            } : null,
+          } : null,
+        } : null,
+      },
+    };
   }
-
   async getTransactionsByAccount(accountId: string, params?: {
     page?: number;
     limit?: number;

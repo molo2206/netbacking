@@ -2,9 +2,10 @@
 import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, IsPhoneNumber } from 'class-validator';
 
 export class RegisterDto {
-  @IsEmail({}, { message: 'Invalid email format' })
-  @IsNotEmpty({ message: 'Email is required' })
-  email!: string;
+  
+  @IsOptional()
+  @IsString()
+  email?: string;
 
   @IsPhoneNumber(undefined, { message: 'Invalid phone number' })
   @IsNotEmpty({ message: 'Phone number is required' })

@@ -1,6 +1,7 @@
 // apps/transaction-service/src/dto/create-transaction.dto.ts
+
 import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min } from 'class-validator';
-import { transactions_type, transactions_status, transfers_type } from '@prisma/client';
+import { transactions_type, transactions_status, transfers_type, transfers_platform } from '@prisma/client';
 
 export class CreateTransactionDto {
   @IsNotEmpty()
@@ -42,9 +43,9 @@ export class TransferDto {
   @IsString()
   receiverAccountId: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  receiverName: string;
+  receiverName?: string;
 
   @IsOptional()
   @IsString()
@@ -75,9 +76,14 @@ export class TransferDto {
   @IsEnum(transfers_type)
   type?: transfers_type;
 
-  @IsNotEmpty()
+  @IsOptional()
+  @IsEnum(transfers_platform)
+  platform?: transfers_platform;
+
+  // ✅ Rendre optionnel car il sera ajouté par le guard
+  @IsOptional()
   @IsString()
-  initiatedBy: string;
+  initiatedBy?: string;
 }
 
 export class DepositDto {

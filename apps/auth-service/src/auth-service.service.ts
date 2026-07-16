@@ -129,7 +129,7 @@ export class AuthServiceService {
       // Vérifier user existant
       const existingUser = await this.prisma.user.findFirst({
         where: {
-          OR: [{ email: data.email }, { phone: data.phone }],
+          OR: [{ phone: data.phone }],
         },
       });
 
@@ -143,7 +143,6 @@ export class AuthServiceService {
       let finalClientId: string;
 
       if (data.clientId) {
-        // Vérifier si le clientId existe déjà dans la base
         const existingAccount = await this.prisma.account.findFirst({
           where: { clientId: data.clientId },
         });
@@ -154,7 +153,6 @@ export class AuthServiceService {
           );
         }
 
-        // ✅ Le compte existe, on l'utilise
         finalClientId = data.clientId;
       } else {
         throw new BadRequestException(
@@ -166,7 +164,6 @@ export class AuthServiceService {
       const otpProvided = data.otpCode && data.otpCode.trim() !== '';
 
       if (!otpProvided) {
-        // Désactiver anciens OTP
         await this.prisma.otp.updateMany({
           where: {
             email: phone,
@@ -265,7 +262,6 @@ export class AuthServiceService {
 
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-      // ✅ Créer l'utilisateur avec clientId
       const user = await this.prisma.user.create({
         data: {
           id: crypto.randomUUID(),
@@ -276,23 +272,20 @@ export class AuthServiceService {
           lastName: data.lastName,
           role: UserRole.USER,
           status: users_status.ACTIVE,
-          clientId: finalClientId, // ✅ Ajouter clientId dans user
+          clientId: finalClientId,
           ...(data.referralCode && {
             referredBy: data.referralCode,
           }),
         },
       });
 
-      // ✅ Le compte existe déjà, on le lie via clientId (pas besoin de update)
       console.log(`[Account] ClientId ${finalClientId} lié à l'utilisateur ${user.id}`);
 
-      // Marquer OTP utilisé
       await this.prisma.otp.update({
         where: { id: otpRecord.id },
         data: { isUsed: true },
       });
 
-      // Audit
       await this.logAudit(
         user.id,
         'REGISTER',
@@ -384,7 +377,7 @@ export class AuthServiceService {
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 30);
 
-      await this.prisma.session.create({
+      const createdSession = await this.prisma.session.create({
         data: {
           id: crypto.randomUUID(),
           userId: user.id,
@@ -398,13 +391,7 @@ export class AuthServiceService {
         },
       });
 
-      const result = this.generateJwtResponse(
-        user,
-        tokens,
-        sessionToken,
-        this.i18nService.translate('register_success', lang),
-      );
-
+      // Récupérer toutes les sessions actives
       const sessions = await this.prisma.session.findMany({
         where: {
           userId: user.id,
@@ -414,10 +401,60 @@ export class AuthServiceService {
         orderBy: { createdAt: 'desc' },
       });
 
+      // Formatage unifié des sessions
+      const formattedSessions = sessions.map(session => ({
+        id: session.id,
+        device_info: session.userAgent,
+        ip_address: session.ipAddress,
+        last_activity: session.createdAt,
+        created_at: session.createdAt,
+        expires_at: session.expiresAt,
+      }));
+
+      // Récupérer les comptes
+      let accounts: any[] = [];
+      if (user.clientId) {
+        accounts = await this.prisma.account.findMany({
+          where: { clientId: user.clientId },
+          select: {
+            id: true,
+            clientId: true,
+            accountType: true,
+            balance: true,
+            currency: true,
+            status: true,
+            isMain: true,
+          },
+        });
+      }
+
+      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE LOGIN
       return {
-        ...result,
-        sessions,
-        clientId: finalClientId,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        message: this.i18nService.translate('register_success', lang),
+        sessionId: createdSession.id,
+        data: {
+          id: user.id,
+          email: user.email || null,
+          phone: user.phone,
+          full_name: `${user.firstName} ${user.lastName}`,
+          role: user.role,
+          status: user.status,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          clientId: user.clientId,
+          sessions: formattedSessions,
+          accounts: accounts.map(account => ({
+            id: account.id,
+            clientId: account.clientId,
+            accountType: account.accountType,
+            balance: account.balance,
+            currency: account.currency,
+            status: account.status,
+            isMain: account.isMain,
+          })),
+        },
       };
     } finally {
       registerLocks.delete(key);
@@ -433,7 +470,6 @@ export class AuthServiceService {
     const identifier = dto.identifier;
 
     try {
-      // ✅ SELECT avec clientId
       const user = await this.prisma.user.findFirst({
         where: {
           OR: [
@@ -487,7 +523,6 @@ export class AuthServiceService {
         });
       }
 
-      // Vérifier si le compte est verrouillé
       if (user.lockedUntil && user.lockedUntil > new Date()) {
         const minutesLeft = Math.ceil(
           (user.lockedUntil.getTime() - Date.now()) / 60000,
@@ -503,7 +538,6 @@ export class AuthServiceService {
         throw new RpcException({ status: 'error', message, statusCode: 403 });
       }
 
-      // Vérifier le statut du compte
       if (user.status !== users_status.ACTIVE) {
         await this.logFailedLoginAttempt(
           user.id,
@@ -518,7 +552,6 @@ export class AuthServiceService {
         });
       }
 
-      // Vérifier si l'utilisateur a un mot de passe
       if (!user.password) {
         await this.logFailedLoginAttempt(
           user.id,
@@ -533,7 +566,6 @@ export class AuthServiceService {
         });
       }
 
-      // Vérifier le mot de passe
       const isValidPassword = await bcrypt.compare(dto.password, user.password);
       if (!isValidPassword) {
         const newAttempts = (user.failedLoginAttempts || 0) + 1;
@@ -568,7 +600,6 @@ export class AuthServiceService {
         });
       }
 
-      // Succès - Réinitialiser les tentatives
       await this.prisma.user.update({
         where: { id: user.id },
         data: {
@@ -580,7 +611,6 @@ export class AuthServiceService {
         },
       });
 
-      // Enregistrer l'historique de connexion
       await this.prisma.loginHistory.create({
         data: {
           userId: user.id,
@@ -591,11 +621,9 @@ export class AuthServiceService {
         },
       });
 
-      // Générer les tokens JWT
       const userRole = user.role || UserRole.USER;
       const tokens = this.generateJwtTokens(user.id, user.email || null, userRole);
 
-      // Gestion deviceId
       let deviceId = dto.fcmToken;
       if (!deviceId) {
         const fingerprint = `${dto.deviceInfo || ''}|${dto.platform || ''}|${ipAddress || ''}`;
@@ -605,7 +633,6 @@ export class AuthServiceService {
           .digest('hex');
       }
 
-      // Désactiver les anciennes sessions
       await this.prisma.session.updateMany({
         where: {
           userId: user.id,
@@ -615,7 +642,6 @@ export class AuthServiceService {
         data: { isActive: false },
       });
 
-      const sessionToken = crypto.randomUUID();
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 30);
 
@@ -633,9 +659,7 @@ export class AuthServiceService {
           createdAt: new Date(),
         },
       });
-      const sessionId = createdSession.id;
 
-      // FCM Token
       if (dto.fcmToken && dto.fcmToken.trim()) {
         try {
           await this.prisma.device.upsert({
@@ -661,11 +685,11 @@ export class AuthServiceService {
         }
       }
 
-      // ✅ Récupérer les comptes
+      // Récupérer les comptes
       let accounts: any[] = [];
       if (user.clientId) {
         accounts = await this.prisma.account.findMany({
-          where: { clientId: { startsWith: user.clientId } },
+          where: { clientId: user.clientId },
           select: {
             id: true,
             clientId: true,
@@ -678,40 +702,52 @@ export class AuthServiceService {
         });
       }
 
-      // ✅ Construction de la réponse SANS objet "user"
+      // Récupérer toutes les sessions actives
+      const sessions = await this.prisma.session.findMany({
+        where: {
+          userId: user.id,
+          isActive: true,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Formatage unifié des sessions
+      const formattedSessions = sessions.map(session => ({
+        id: session.id,
+        device_info: session.userAgent,
+        ip_address: session.ipAddress,
+        last_activity: session.createdAt,
+        created_at: session.createdAt,
+        expires_at: session.expiresAt,
+      }));
+
+      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER
       return {
-        success: true,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
         message: this.i18nService.translate('login_success', lang),
+        sessionId: createdSession.id,
         data: {
           id: user.id,
-          email: user.email,
+          email: user.email || null,
           phone: user.phone,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          full_name: user.firstName + ' ' + user.lastName,
-          photo: user.photo,
+          full_name: `${user.firstName} ${user.lastName}`,
           role: user.role,
           status: user.status,
-          clientId: user.clientId,
-          isEmailVerified: user.isEmailVerified,
-          isPhoneVerified: user.isPhoneVerified,
-          isTwoFactorEnabled: user.isTwoFactorEnabled,
-          preferredLanguage: user.preferredLanguage,
-          preferredCurrency: user.preferredCurrency,
-          timezone: user.timezone,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
-          tokens: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresIn: process.env.JWT_EXPIRATION || '1h',
-          },
-          session: {
-            id: sessionId,
-            deviceId: deviceId,
-            expiresAt: expiresAt,
-          },
-          accounts: accounts,
+          clientId: user.clientId,
+          sessions: formattedSessions,
+          accounts: accounts.map(account => ({
+            id: account.id,
+            clientId: account.clientId,
+            accountType: account.accountType,
+            balance: account.balance,
+            currency: account.currency,
+            status: account.status,
+            isMain: account.isMain,
+          })),
         },
       };
     } catch (error) {
@@ -1436,7 +1472,7 @@ export class AuthServiceService {
   }
 
   // ==================== GET PROFILE ====================
-  async getProfile(userId: string) {
+async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -1493,8 +1529,8 @@ export class AuthServiceService {
       },
     });
 
-    // Récupérer la session active si elle existe
-    const session = await this.prisma.session.findFirst({
+    // Récupérer toutes les sessions actives
+    const sessions = await this.prisma.session.findMany({
       where: {
         userId: user.id,
         isActive: true,
@@ -1503,45 +1539,54 @@ export class AuthServiceService {
       select: {
         id: true,
         deviceId: true,
+        userAgent: true,
+        ipAddress: true,
+        createdAt: true,
         expiresAt: true,
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    // Construire la réponse
+    // Formatage unifié des sessions
+    const formattedSessions = sessions.map(session => ({
+      id: session.id,
+      device_info: session.userAgent,
+      ip_address: session.ipAddress,
+      last_activity: session.createdAt,
+      created_at: session.createdAt,
+      expires_at: session.expiresAt,
+    }));
+
+    // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER ET LOGIN
     return {
-      success: true,
+      accessToken: null,
+      refreshToken: null,
       message: 'Profile retrieved successfully',
+      sessionId: sessions[0]?.id || null,
       data: {
         id: user.id,
-        email: user.email,
+        email: user.email || null,
         phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
         full_name: `${user.firstName} ${user.lastName}`,
-        photo: user.photo,
         role: user.role,
         status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
         clientId: user.clientId,
+        photo: user.photo,
         isEmailVerified: user.isEmailVerified,
         isPhoneVerified: user.isPhoneVerified,
         isTwoFactorEnabled: user.isTwoFactorEnabled,
         preferredLanguage: user.preferredLanguage || user.user_settings?.language || 'fr',
         preferredCurrency: user.preferredCurrency,
         timezone: user.timezone,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        tokens: null, // Pas de tokens dans le profil
-        session: session ? {
-          id: session.id,
-          deviceId: session.deviceId,
-          expiresAt: session.expiresAt,
-        } : null,
+        pinStatus: user.pinStatus,
+        sessions: formattedSessions,
         accounts: accounts.map(account => ({
           id: account.id,
           clientId: account.clientId,
           accountType: account.accountType,
-          balance: account.balance?.toString() || '0',
+          balance: account.balance,
           currency: account.currency,
           status: account.status,
           isMain: account.isMain,

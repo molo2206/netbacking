@@ -132,7 +132,7 @@ model Transfer {
   createdAt         DateTime?           @default(now()) @db.DateTime(0)
   updatedAt         DateTime?           @default(now()) @updatedAt @db.DateTime(0)
   notifications     Notification[]
-  transaction       Transaction?
+  transaction       Transaction[]
   senderAccount     Account             @relation("SenderAccount", fields: [senderAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_1")
   receiverAccount   Account             @relation("ReceiverAccount", fields: [receiverAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_2")
   senderUser        User                @relation("SentTransfers", fields: [initiatedBy], references: [id], onUpdate: Restrict, map: "transfers_ibfk_3")
@@ -149,7 +149,7 @@ model Transfer {
 
 model Transaction {
   id            String               @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  transferId    String               @unique(map: "transferId") @db.VarChar(36)
+  transferId    String               @db.VarChar(36)
   accountId     String               @db.VarChar(36)
   type          transactions_type
   status        transactions_status? @default(PENDING)

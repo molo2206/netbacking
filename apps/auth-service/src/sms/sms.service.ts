@@ -11,10 +11,11 @@ interface SmsResponse {
 
 @Injectable()
 export class SmsService {
-  private readonly apiId = 'API23108080245';
+   private readonly apiId = 'API23108080245';
   private readonly apiPassword = 'V90ae6RB3p';
-  private readonly sender = 'AccesFinance';
+  private readonly sender = 'AccesPay';
   private readonly apiUrl = 'https://api2.dream-digital.info/api/SendSMS';
+
 
   async sendSms(phoneNumber: string, message: string): Promise<boolean> {
     try {

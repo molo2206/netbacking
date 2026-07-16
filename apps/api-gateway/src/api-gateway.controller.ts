@@ -173,9 +173,6 @@ export class ApiGatewayController {
   ) {
     const lang = langHeader || 'fr';
 
-    if (!body.email) {
-      throw new HttpException('Email is required', HttpStatus.BAD_REQUEST);
-    }
     if (!body.phone) {
       throw new HttpException('Phone is required', HttpStatus.BAD_REQUEST);
     }
@@ -1495,13 +1492,21 @@ export class ApiGatewayController {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
     const lang = langHeader || 'fr';
+
+    // ✅ Utiliser sendTransactionMessage
     return this.sendTransactionMessage(
       'transaction.transfer',
-      { ...body, initiatedBy: currentUser.id, lang },
+      {
+        ...body,
+        fees: body.fees || 0,
+        initiatedBy: currentUser.id,
+        lang,
+      },
       'Transfer failed',
       HttpStatus.BAD_REQUEST,
     );
   }
+
 
   @Get('transactions/:id')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
