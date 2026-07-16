@@ -437,6 +437,21 @@ export class UserServiceController {
     }
   }
 
+  @MessagePattern('get_user_accounts')
+  async getUserAccounts(@Payload() data: { userId: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    try {
+      return await this.userService.getUserAccounts(data.userId, lang);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get user accounts',
+        statusCode: 500,
+      });
+    }
+  }
+
   @MessagePattern('list_all_clients')
   async listAllClients(@Payload() data: {
     page?: number;

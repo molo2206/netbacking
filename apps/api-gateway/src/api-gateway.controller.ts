@@ -1730,7 +1730,7 @@ export class ApiGatewayController {
     );
   }
 
-  @Get('clients')
+  @Get('users/clients')
   async listAllClients(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -1739,7 +1739,7 @@ export class ApiGatewayController {
     @Query('kycLevel') kycLevel?: string,
     @Headers('lang') langHeader?: string,
   ) {
-   
+
     const lang = langHeader || 'fr';
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
@@ -1758,6 +1758,27 @@ export class ApiGatewayController {
       HttpStatus.INTERNAL_SERVER_ERROR
     );
   }
+
+  @Get('users/me/accounts')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getMyAccounts(
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendUserMessage(
+      'get_user_accounts',
+      { userId: currentUser.id, lang },
+      'Failed to get accounts',
+      HttpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
+
   // ==================== HEALTH CHECK ====================
 
   @Get('health')

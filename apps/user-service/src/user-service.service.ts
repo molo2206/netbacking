@@ -1576,6 +1576,108 @@ export class UserServiceService {
       },
     };
   }
+
+  async getUserAccounts(
+    userId: string,
+    lang: string = 'fr'
+  ): Promise<{ message: string; data: any }> {
+    console.log(`[getUserAccounts] Langue utilisée : ${lang} pour l'utilisateur ${userId}`);
+
+    if (!userId) {
+      throw new RpcException({
+        status: 'error',
+        message: 'User ID is required',
+        statusCode: 400,
+      });
+    }
+
+    // 1. Vérifier que l'utilisateur existe
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        clientId: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+      },
+    });
+
+    if (!user) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('user_not_found', lang),
+        statusCode: 404,
+      });
+    }
+
+    // 2. Récupérer les comptes de l'utilisateur via clientId
+    let accounts: any[] = [];
+
+    if (user.clientId) {
+      accounts = await this.prisma.account.findMany({
+        where: { clientId: user.clientId },
+        select: {
+          id: true,
+          clientId: true,
+          accountNumber: true,
+          accountType: true,
+          balance: true,
+          currency: true,
+          status: true,
+          isMain: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: {
+          isMain: 'desc',
+        },
+      });
+    }
+
+    // 3. Récupérer les informations du client
+    let clientInfo = null;
+    if (user.clientId) {
+      clientInfo = await this.prisma.clients.findUnique({
+        where: { clientId: user.clientId },
+        select: {
+          fullName: true,
+          email: true,
+          phone: true,
+          status: true,
+          kycLevel: true,
+        },
+      });
+    }
+
+    return {
+      message: this.i18nService.translate('user_accounts_retrieved', lang),
+      data: {
+        user: {
+          id: user.id,
+          clientId: user.clientId,
+          email: user.email,
+          phone: user.phone,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          fullName: `${user.firstName} ${user.lastName}`,
+        },
+        client: clientInfo,
+        accounts: accounts,
+        total: accounts.length,
+        summary: {
+          totalBalance: accounts.reduce((sum, acc) => sum + (acc.balance?.toNumber() || 0), 0),
+          currencies: [...new Set(accounts.map(acc => acc.currency))],
+          types: {
+            courant: accounts.filter(a => a.accountType === 'COURANT').length,
+            epargne: accounts.filter(a => a.accountType === 'EPARGNE').length,
+            premium: accounts.filter(a => a.accountType === 'PREMIUM').length,
+          },
+        },
+      },
+    };
+  }
   // ========================= HEALTH CHECK =========================
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };
