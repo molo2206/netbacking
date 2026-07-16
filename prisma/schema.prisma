@@ -92,6 +92,7 @@ model Session {
 
 model Account {
   id                String                @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  accountNumber     String?               @unique(map: "accountNumber") @db.VarChar(50)
   clientId          String                @db.VarChar(50)
   accountType       accounts_accountType? @default(COURANT)
   balance           Decimal?              @default(0.00) @db.Decimal(15, 2)

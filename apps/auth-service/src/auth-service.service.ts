@@ -450,6 +450,7 @@ export class AuthServiceService {
             currency: true,
             status: true,
             isMain: true,
+            accountNumber: true
           },
         });
       }
@@ -480,6 +481,7 @@ export class AuthServiceService {
             currency: account.currency,
             status: account.status,
             isMain: account.isMain,
+            accountNumber: account.accountNumber
           })),
         },
       };
@@ -726,6 +728,7 @@ export class AuthServiceService {
             currency: true,
             status: true,
             isMain: true,
+            accountNumber: true,
           },
         });
       }
@@ -776,6 +779,7 @@ export class AuthServiceService {
             currency: account.currency,
             status: account.status,
             isMain: account.isMain,
+            accountNumber: account.accountNumber
           })),
         },
       };
