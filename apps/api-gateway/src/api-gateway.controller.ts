@@ -1732,7 +1732,6 @@ export class ApiGatewayController {
 
   @Get('clients')
   async listAllClients(
-    @CurrentUser() currentUser: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('search') search?: string,
