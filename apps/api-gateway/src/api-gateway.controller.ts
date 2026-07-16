@@ -1717,7 +1717,6 @@ export class ApiGatewayController {
   }
 
   @Get('clients/:clientId')
-  @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getClientByClientId(
     @Param('clientId') clientId: string,
     @Headers('lang') langHeader?: string,
