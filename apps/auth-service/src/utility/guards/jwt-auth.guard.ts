@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { TokenExpiredError, JsonWebTokenError } from 'jsonwebtoken';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -34,21 +33,12 @@ export class JwtAuthGuard implements CanActivate {
     console.log('[JwtAuthGuard] Token preview:', token.substring(0, 30) + '...');
 
     try {
-      // ✅ Utiliser JwtService au lieu de jsonwebtoken.verify
       const secretKey = this.configService.get<string>('JWT_SECRET') || 'secret';
       
       const payload = this.jwtService.verify(token, {
         secret: secretKey,
       });
 
-      console.log('[JwtAuthGuard] Payload verified:', {
-        sub: payload.sub,
-        id: payload.id,
-        role: payload.role,
-        email: payload.email,
-      });
-
-      // ✅ Récupérer l'ID depuis sub ou id
       const userId = payload.sub || payload.id;
 
       if (!userId) {
@@ -56,7 +46,6 @@ export class JwtAuthGuard implements CanActivate {
         throw new UnauthorizedException('Payload JWT invalide');
       }
 
-      // ✅ Attacher l'utilisateur à la requête
       const user = {
         id: userId,
         email: payload.email ?? null,
@@ -67,8 +56,6 @@ export class JwtAuthGuard implements CanActivate {
         account_number: payload.account_number ?? null,
         deleted: payload.deleted ?? false,
         sessionToken: payload.sessionToken,
-        createdAt: payload.createdAt ? new Date(payload.createdAt) : new Date(),
-        updatedAt: payload.updatedAt ? new Date(payload.updatedAt) : new Date(),
       };
 
       request.currentUser = user;
@@ -84,13 +71,17 @@ export class JwtAuthGuard implements CanActivate {
     } catch (err) {
       console.error('[JwtAuthGuard] Error:', err.message);
 
-      if (err instanceof TokenExpiredError || err.name === 'TokenExpiredError') {
-        throw new ForbiddenException('Token expiré');
+      // ✅ Token expiré → 401 Unauthorized
+      if (err.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token expiré');
       }
-      if (err instanceof JsonWebTokenError || err.name === 'JsonWebTokenError') {
+      
+      // ✅ Token invalide → 401 Unauthorized
+      if (err.name === 'JsonWebTokenError') {
         console.error('[JwtAuthGuard] JWT Error:', err.message);
         throw new UnauthorizedException('Token invalide');
       }
+      
       throw new UnauthorizedException('Erreur d\'authentification');
     }
   }

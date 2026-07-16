@@ -1,8 +1,8 @@
 // apps/auth-service/src/utility/middlewares/current-user.middleware.ts
+
 import {
   Injectable,
   NestMiddleware,
-  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
@@ -29,30 +29,20 @@ export class CurrentUserMiddleware implements NestMiddleware {
     console.log('Token preview:', token.substring(0, 50) + '...');
 
     try {
-      const secretKey =
-        this.configService.get<string>('JWT_SECRET') ||
-        this.configService.get<string>('ACCESS_TOKEN_SECRET_KEY') ||
-        'secret';
-
-      console.log('Using secret:', secretKey.substring(0, 10) + '...');
-
+      const secretKey = this.configService.get<string>('JWT_SECRET') || 'secret';
       const payload = verify(token, secretKey) as any;
 
       console.log('Token payload:', {
         id: payload.id,
         role: payload.role,
         status: payload.status,
-        hasEmail: !!payload.email,
-        hasPhone: !!payload.phone,
       });
 
-      // Vérifier les champs requis
       if (!payload.id) {
         console.error('Missing id in payload');
         throw new UnauthorizedException('Token invalide: ID manquant');
       }
 
-      // Définir currentUser directement depuis le payload
       (req as any).currentUser = {
         id: payload.id,
         email: payload.email ?? null,
@@ -75,13 +65,18 @@ export class CurrentUserMiddleware implements NestMiddleware {
       next();
     } catch (err) {
       console.error('Token verification failed:', err.message);
+      
+      // ✅ Token expiré → 401 Unauthorized
       if (err instanceof TokenExpiredError) {
-        throw new ForbiddenException('Token expiré.');
+        throw new UnauthorizedException('Token expiré');
       }
+      
+      // ✅ Token invalide → 401 Unauthorized
       if (err instanceof JsonWebTokenError) {
-        throw new UnauthorizedException('Token invalide.');
+        throw new UnauthorizedException('Token invalide');
       }
-      throw new UnauthorizedException('Erreur d’authentification.');
+      
+      throw new UnauthorizedException('Erreur d\'authentification');
     }
   }
 }
