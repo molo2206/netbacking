@@ -1716,6 +1716,55 @@ export class ApiGatewayController {
     );
   }
 
+  @Get('clients/:clientId')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getClientByClientId(
+    @Param('clientId') clientId: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    const lang = langHeader || 'fr';
+    return this.sendUserMessage(
+      'get_client_by_client_id',
+      { clientId, lang },
+      'Failed to get client',
+      HttpStatus.NOT_FOUND
+    );
+  }
+
+  @Get('clients')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async listAllClients(
+    @CurrentUser() currentUser: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('kycLevel') kycLevel?: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    // Vérifier que l'utilisateur est admin
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
+      throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
+    }
+
+    const lang = langHeader || 'fr';
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+
+    return this.sendUserMessage(
+      'list_all_clients',
+      {
+        page: pageNum,
+        limit: limitNum,
+        search,
+        status,
+        kycLevel,
+        lang
+      },
+      'Failed to list clients',
+      HttpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
   // ==================== HEALTH CHECK ====================
 
   @Get('health')

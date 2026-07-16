@@ -1385,6 +1385,197 @@ export class UserServiceService {
     };
   }
 
+
+  async getClientByClientId(
+    clientId: string,
+    lang: string = 'fr'
+  ): Promise<{ message: string; data: any }> {
+    console.log(`[getClientByClientId] Langue utilisée : ${lang} pour le clientId ${clientId}`);
+
+    if (!clientId) {
+      throw new RpcException({
+        status: 'error',
+        message: 'Client ID is required',
+        statusCode: 400,
+      });
+    }
+
+    // Récupérer le client depuis la table clients
+    const client = await this.prisma.clients.findUnique({
+      where: { clientId: clientId },
+      include: {
+        accounts: {
+          select: {
+            id: true,
+            clientId: true,
+            accountType: true,
+            balance: true,
+            currency: true,
+            status: true,
+            isMain: true,
+          },
+        },
+      },
+    });
+
+    if (!client) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('client_not_found', lang),
+        statusCode: 404,
+      });
+    }
+
+    // Récupérer l'utilisateur lié à ce clientId
+    const user = await this.prisma.user.findFirst({
+      where: { clientId: clientId },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        photo: true,
+        preferredLanguage: true,
+        preferredCurrency: true,
+        timezone: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: this.i18nService.translate('client_retrieved_success', lang),
+      data: {
+        client: {
+          id: client.id,
+          clientId: client.clientId,
+          fullName: client.fullName,
+          email: client.email,
+          phone: client.phone,
+          address: client.address,
+          city: client.city,
+          country: client.country,
+          idNumber: client.idNumber,
+          idType: client.idType,
+          dateOfBirth: client.dateOfBirth,
+          gender: client.gender,
+          status: client.status,
+          kycLevel: client.kycLevel,
+          kycVerifiedAt: client.kycVerifiedAt,
+          profilePicture: client.profilePicture,
+          createdAt: client.createdAt,
+          updatedAt: client.updatedAt,
+          accounts: client.accounts,
+        },
+        user: user || null,
+      },
+    };
+  }
+
+  async listAllClients(params: {
+    page: number;
+    limit: number;
+    search?: string;
+    status?: string;
+    kycLevel?: string;
+    lang?: string;
+  }) {
+    const lang = params.lang || 'fr';
+    console.log(`[listAllClients] Langue utilisée : ${lang}`);
+
+    const { page = 1, limit = 10, search, status, kycLevel } = params;
+    const skip = (page - 1) * limit;
+
+    // Construire la condition WHERE
+    const where: any = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (kycLevel) {
+      where.kycLevel = kycLevel;
+    }
+
+    if (search) {
+      where.OR = [
+        { clientId: { contains: search } },
+        { fullName: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ];
+    }
+
+    // Récupérer les clients avec leurs comptes
+    const [clients, total] = await Promise.all([
+      this.prisma.clients.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          accounts: {
+            select: {
+              id: true,
+              accountType: true,
+              balance: true,
+              currency: true,
+              status: true,
+              isMain: true,
+            },
+          },
+        },
+      }),
+      this.prisma.clients.count({ where }),
+    ]);
+
+    // Récupérer les utilisateurs liés à chaque client
+    const clientIds = clients.map(c => c.clientId);
+    const users = await this.prisma.user.findMany({
+      where: { clientId: { in: clientIds } },
+      select: {
+        clientId: true,
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    // Mapper les utilisateurs par clientId
+    const userMap = new Map();
+    users.forEach(user => {
+      if (user.clientId) {
+        userMap.set(user.clientId, user);
+      }
+    });
+
+    // Formater la réponse
+    const formattedClients = clients.map(client => ({
+      ...client,
+      accounts: client.accounts,
+      user: userMap.get(client.clientId) || null,
+    }));
+
+    // ✅ Retourner avec data.data
+    return {
+      message: this.i18nService.translate('clients_list_retrieved', lang),
+      data: {
+        data: formattedClients,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
   // ========================= HEALTH CHECK =========================
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };

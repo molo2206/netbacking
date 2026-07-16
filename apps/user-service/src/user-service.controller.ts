@@ -17,7 +17,7 @@ import { UpdateUserDto } from '../dto/update-user.dto';
 
 @Controller()
 export class UserServiceController {
-  constructor(private readonly userService: UserServiceService) {}
+  constructor(private readonly userService: UserServiceService) { }
 
   // ==================== COMMANDES AVEC TRADUCTION ====================
 
@@ -422,6 +422,49 @@ export class UserServiceController {
     }
   }
 
+  @MessagePattern('get_client_by_client_id')
+  async getClientByClientId(@Payload() data: { clientId: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    try {
+      return await this.userService.getClientByClientId(data.clientId, lang);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get client',
+        statusCode: 500,
+      });
+    }
+  }
+
+  @MessagePattern('list_all_clients')
+  async listAllClients(@Payload() data: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    kycLevel?: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+    try {
+      return await this.userService.listAllClients({
+        page: data.page || 1,
+        limit: data.limit || 10,
+        search: data.search,
+        status: data.status,
+        kycLevel: data.kycLevel,
+        lang,
+      });
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to list clients',
+        statusCode: 500,
+      });
+    }
+  }
   @MessagePattern('health_check')
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };
