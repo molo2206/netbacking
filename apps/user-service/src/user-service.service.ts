@@ -1577,6 +1577,8 @@ export class UserServiceService {
     };
   }
 
+  // apps/user-service/src/user-service.service.ts
+
   async getUserAccounts(
     userId: string,
     lang: string = 'fr'
@@ -1637,9 +1639,9 @@ export class UserServiceService {
     }
 
     // 3. Récupérer les informations du client
-    let clientInfo = null;
+    let clientInfo: any = null;
     if (user.clientId) {
-      clientInfo = await this.prisma.clients.findUnique({
+      const client = await this.prisma.clients.findUnique({
         where: { clientId: user.clientId },
         select: {
           fullName: true,
@@ -1649,6 +1651,16 @@ export class UserServiceService {
           kycLevel: true,
         },
       });
+
+      if (client) {
+        clientInfo = {
+          fullName: client.fullName,
+          email: client.email,
+          phone: client.phone,
+          status: client.status,
+          kycLevel: client.kycLevel,
+        };
+      }
     }
 
     return {
