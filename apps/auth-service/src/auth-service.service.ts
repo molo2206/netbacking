@@ -1529,6 +1529,7 @@ export class AuthServiceService {
         pinStatus: true,
         createdAt: true,
         updatedAt: true,
+        platform: true,
         user_settings: {
           select: {
             language: true,
@@ -1561,6 +1562,7 @@ export class AuthServiceService {
         currency: true,
         status: true,
         isMain: true,
+        accountNumber: true,
       },
     });
 
@@ -1592,7 +1594,7 @@ export class AuthServiceService {
       expires_at: session.expiresAt,
     }));
 
-    // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER ET LOGIN
+    // ✅ RÉPONSE UNIFIÉE - SANS TOKENS
     return {
       accessToken: null,
       refreshToken: null,
@@ -1602,7 +1604,8 @@ export class AuthServiceService {
         id: user.id,
         email: user.email || null,
         phone: user.phone,
-        full_name: `${user.firstName} ${user.lastName}`,
+        firstName: user.firstName,
+        lastName: user.lastName,
         role: user.role,
         status: user.status,
         createdAt: user.createdAt,
@@ -1616,6 +1619,7 @@ export class AuthServiceService {
         preferredCurrency: user.preferredCurrency,
         timezone: user.timezone,
         pinStatus: user.pinStatus,
+        platform: user.platform || null,
         sessions: formattedSessions,
         accounts: accounts.map(account => ({
           id: account.id,
@@ -1625,6 +1629,7 @@ export class AuthServiceService {
           currency: account.currency,
           status: account.status,
           isMain: account.isMain,
+          accountNumber: account.accountNumber,
         })),
         settings: user.user_settings ? {
           language: user.user_settings.language,
@@ -1637,7 +1642,6 @@ export class AuthServiceService {
       },
     };
   }
-
   // ==================== UPDATE PROFILE ====================
   async updateProfile(userId: string, data: any) {
     const user = await this.prisma.user.findUnique({

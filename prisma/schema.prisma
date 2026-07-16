@@ -515,7 +515,8 @@ model user_has_resources {
 model clients {
   id             String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
   clientId       String    @unique(map: "clientId") @db.VarChar(50)
-  fullName       String    @db.VarChar(255)
+  firstName      String?   @db.VarChar(255)
+  lastName       String?   @db.VarChar(255)
   email          String?   @db.VarChar(255)
   phone          String?   @db.VarChar(50)
   address        String?   @db.Text
