@@ -227,6 +227,8 @@ export class UserServiceService {
     };
   }
 
+  // apps/user-service/src/user-service.service.ts
+
   // ========================= CREATE USER FROM ACCOUNT =========================
   async createUserFromAccount(
     data: CreateUserFromAccountDto,
@@ -288,13 +290,19 @@ export class UserServiceService {
       where: { clientId: clientId },
     });
 
+    // ✅ Extraire firstName et lastName de fullName
+    const nameParts = data.fullName.trim().split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
     if (!existingClient) {
-      // Créer le client s'il n'existe pas
+      // ✅ Créer le client avec firstName et lastName
       await this.prisma.clients.create({
         data: {
           id: crypto.randomUUID(),
           clientId: clientId,
-          fullName: data.fullName,
+          firstName: firstName,
+          lastName: lastName,
           email: data.email,
           phone: data.phone,
           status: 'ACTIVE',
@@ -312,8 +320,8 @@ export class UserServiceService {
         id: crypto.randomUUID(),
         email: email,
         phone: data.phone,
-        firstName: data.fullName.split(' ')[0] || '',
-        lastName: data.fullName.split(' ').slice(1).join(' ') || '',
+        firstName: firstName,
+        lastName: lastName,
         password: hashedPassword,
         role: data.role || UserRole.USER,
         status: users_status.ACTIVE,
@@ -339,7 +347,8 @@ export class UserServiceService {
     const cleanPhone = data.phone.replace(/[^0-9+]/g, '');
     try {
       const smsText = this.i18nService.translate('welcome_sms', lang, {
-        full_name: data.fullName,
+        firstName: user.firstName,
+        lastName: user.lastName,
         phone: cleanPhone,
         password: defaultPassword,
       });
@@ -358,7 +367,8 @@ export class UserServiceService {
           {
             title: this.i18nService.translate('welcome_email_title', lang),
             greeting: this.i18nService.translate('welcome_email_greeting', lang, {
-              name: data.fullName,
+              firstName: user.firstName,
+              lastName: user.lastName,
             }),
             message: this.i18nService.translate('welcome_email_message', lang),
             credentials_label: this.i18nService.translate('welcome_email_credentials', lang),
@@ -384,7 +394,6 @@ export class UserServiceService {
       data: this.toResponse(user),
     };
   }
-
   // ========================= GET USER =========================
   async getUser(id: string, lang: string = 'fr'): Promise<{ message: string; data: UserResponseDto }> {
     console.log(`[getUser] Langue utilisée : ${lang} pour l'utilisateur ${id}`);
@@ -1385,7 +1394,9 @@ export class UserServiceService {
     };
   }
 
+  // apps/user-service/src/user-service.service.ts
 
+  // ========================= GET CLIENT BY CLIENT ID =========================
   async getClientByClientId(
     clientId: string,
     lang: string = 'fr'
@@ -1400,7 +1411,6 @@ export class UserServiceService {
       });
     }
 
-    // Récupérer le client depuis la table clients
     const client = await this.prisma.clients.findUnique({
       where: { clientId: clientId },
       include: {
@@ -1426,7 +1436,6 @@ export class UserServiceService {
       });
     }
 
-    // Récupérer l'utilisateur lié à ce clientId
     const user = await this.prisma.user.findFirst({
       where: { clientId: clientId },
       select: {
@@ -1452,7 +1461,8 @@ export class UserServiceService {
         client: {
           id: client.id,
           clientId: client.clientId,
-          fullName: client.fullName,
+          firstName: client.firstName,
+          lastName: client.lastName,
           email: client.email,
           phone: client.phone,
           address: client.address,
@@ -1475,6 +1485,7 @@ export class UserServiceService {
     };
   }
 
+  // ========================= LIST ALL CLIENTS =========================
   async listAllClients(params: {
     page: number;
     limit: number;
@@ -1489,27 +1500,19 @@ export class UserServiceService {
     const { page = 1, limit = 10, search, status, kycLevel } = params;
     const skip = (page - 1) * limit;
 
-    // Construire la condition WHERE
     const where: any = {};
-
-    if (status) {
-      where.status = status;
-    }
-
-    if (kycLevel) {
-      where.kycLevel = kycLevel;
-    }
-
+    if (status) where.status = status;
+    if (kycLevel) where.kycLevel = kycLevel;
     if (search) {
       where.OR = [
         { clientId: { contains: search } },
-        { fullName: { contains: search } },
+        { firstName: { contains: search } },
+        { lastName: { contains: search } },
         { email: { contains: search } },
         { phone: { contains: search } },
       ];
     }
 
-    // Récupérer les clients avec leurs comptes
     const [clients, total] = await Promise.all([
       this.prisma.clients.findMany({
         where,
@@ -1532,7 +1535,6 @@ export class UserServiceService {
       this.prisma.clients.count({ where }),
     ]);
 
-    // Récupérer les utilisateurs liés à chaque client
     const clientIds = clients.map(c => c.clientId);
     const users = await this.prisma.user.findMany({
       where: { clientId: { in: clientIds } },
@@ -1549,7 +1551,6 @@ export class UserServiceService {
       },
     });
 
-    // Mapper les utilisateurs par clientId
     const userMap = new Map();
     users.forEach(user => {
       if (user.clientId) {
@@ -1557,14 +1558,30 @@ export class UserServiceService {
       }
     });
 
-    // Formater la réponse
     const formattedClients = clients.map(client => ({
-      ...client,
+      id: client.id,
+      clientId: client.clientId,
+      firstName: client.firstName,
+      lastName: client.lastName,
+      email: client.email,
+      phone: client.phone,
+      address: client.address,
+      city: client.city,
+      country: client.country,
+      idNumber: client.idNumber,
+      idType: client.idType,
+      dateOfBirth: client.dateOfBirth,
+      gender: client.gender,
+      status: client.status,
+      kycLevel: client.kycLevel,
+      kycVerifiedAt: client.kycVerifiedAt,
+      profilePicture: client.profilePicture,
+      createdAt: client.createdAt,
+      updatedAt: client.updatedAt,
       accounts: client.accounts,
       user: userMap.get(client.clientId) || null,
     }));
 
-    // ✅ Retourner avec data.data
     return {
       message: this.i18nService.translate('clients_list_retrieved', lang),
       data: {
@@ -1577,8 +1594,7 @@ export class UserServiceService {
     };
   }
 
-  // apps/user-service/src/user-service.service.ts
-
+  // ========================= GET USER ACCOUNTS =========================
   async getUserAccounts(
     userId: string,
     lang: string = 'fr'
@@ -1593,7 +1609,6 @@ export class UserServiceService {
       });
     }
 
-    // 1. Vérifier que l'utilisateur existe
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -1614,9 +1629,7 @@ export class UserServiceService {
       });
     }
 
-    // 2. Récupérer les comptes de l'utilisateur via clientId
     let accounts: any[] = [];
-
     if (user.clientId) {
       accounts = await this.prisma.account.findMany({
         where: { clientId: user.clientId },
@@ -1638,7 +1651,6 @@ export class UserServiceService {
       });
     }
 
-    // ✅ Retourner uniquement les comptes dans data
     return {
       message: this.i18nService.translate('user_accounts_retrieved', lang),
       data: accounts,

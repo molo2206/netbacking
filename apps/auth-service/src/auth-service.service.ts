@@ -107,7 +107,6 @@ export class AuthServiceService {
   }
 
   // ==================== REGISTER ====================
-  // apps/auth-service/src/auth-service.service.ts
   async register(data: RegisterDto, ipAddress?: string) {
     const clientId = data.clientId;
     const lang = data.lang || 'fr';
@@ -266,24 +265,23 @@ export class AuthServiceService {
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
       // ✅ Récupérer les valeurs par défaut pour phone et email
-      // CORRECTION : Utiliser clientInfo?.phone ou data.phone, pas de variable 'phone'
       const finalPhone = clientInfo?.phone || data.phone || clientId;
       const finalEmail = clientInfo?.email || data.email || null;
 
-      // ✅ Construire firstName et lastName
+      // ✅ Construire firstName et lastName (sans fullName)
       let firstName = data.firstName || 'User';
       let lastName = data.lastName || clientId;
 
-      if (clientInfo?.fullName) {
-        const nameParts = clientInfo.fullName.split(' ');
-        firstName = data.firstName || nameParts[0] || 'User';
-        lastName = data.lastName || nameParts.slice(1).join(' ') || clientId;
+      // ✅ Utiliser firstName et lastName du client (modifié)
+      if (clientInfo) {
+        firstName = data.firstName || clientInfo.firstName || 'User';
+        lastName = data.lastName || clientInfo.lastName || clientId;
       }
 
       const userData = {
         id: crypto.randomUUID(),
         email: finalEmail,
-        phone: finalPhone, // ✅ Toujours une string, jamais null
+        phone: finalPhone,
         password: hashedPassword,
         firstName: firstName,
         lastName: lastName,
@@ -342,12 +340,12 @@ export class AuthServiceService {
         }
       }
 
-      // ✅ SMS BIENVENUE
+      // ✅ SMS BIENVENUE (modifié)
       const clientPhone = clientInfo?.phone || user.phone;
       if (clientPhone) {
         try {
           const welcomeSms = this.i18nService.translate('welcome_sms', lang, {
-            full_name: clientInfo?.fullName || `${user.firstName} ${user.lastName}`,
+            full_name: clientInfo ? `${clientInfo.firstName} ${clientInfo.lastName}` : `${user.firstName} ${user.lastName}`,
             account_number: clientId,
             phone: clientPhone,
             password: plainPassword,
@@ -358,18 +356,18 @@ export class AuthServiceService {
         }
       }
 
-      // ✅ EMAIL BIENVENUE
-      const clientEmail = clientInfo?.email || user.email;
-      if (clientEmail) {
+      // ✅ EMAIL BIENVENUE (modifié)
+      const clientEmail2 = clientInfo?.email || user.email;
+      if (clientEmail2) {
         try {
           await this.mailService.sendHtmlEmail(
-            clientEmail,
+            clientEmail2,
             this.i18nService.translate('email_welcome_title', lang),
             'welcome-email.html',
             {
               title: this.i18nService.translate('email_welcome_title', lang),
               greeting: this.i18nService.translate('email_welcome_greeting', lang, {
-                full_name: clientInfo?.fullName || `${user.firstName} ${user.lastName}`,
+                full_name: clientInfo ? `${clientInfo.firstName} ${clientInfo.lastName}` : `${user.firstName} ${user.lastName}`,
               }),
               message: this.i18nService.translate('email_welcome_message', lang),
               credentials_label: this.i18nService.translate('email_welcome_credentials', lang),
@@ -387,7 +385,7 @@ export class AuthServiceService {
               copyright: this.i18nService.translate('email_otp_copyright', lang, {
                 year: new Date().getFullYear(),
               }),
-              email: clientEmail,
+              email: clientEmail2,
             },
           );
         } catch (err) {
@@ -799,6 +797,7 @@ export class AuthServiceService {
       });
     }
   }
+
   // ==================== REFRESH TOKEN ====================
   async refreshToken(refreshToken: string) {
     try {
@@ -1428,7 +1427,11 @@ export class AuthServiceService {
   async validate(identifier: string, password: string): Promise<any> {
     const user = await this.prisma.user.findFirst({
       where: {
-        OR: [{ email: identifier }, { phone: identifier }],
+        OR: [
+          { email: identifier },
+          { phone: identifier },
+          { clientId: identifier },
+        ],
       },
     });
 
