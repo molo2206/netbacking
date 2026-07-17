@@ -278,30 +278,26 @@ export class TransactionServiceService {
       // 5. Préparation des informations du bénéficiaire
       const reference = this.generateTransferReference();
 
-      // ✅ Initialiser les variables avec des valeurs par défaut
       let receiverName = data.receiverName || 'Unknown';
-      let receiverAccountNumber = receiverAccount.accountNumber || `ACCT-${receiverAccount.id.substring(0, 8)}`;
-      let receiverBankName = 'Banque inconnue'; // Valeur par défaut
+      let receiverAccountNumber = receiverAccount.accountNumber ||
+        `ACCT-${receiverAccount.id.substring(0, 8)}`;
+      let receiverBankName = 'Banque inconnue';
       let receiverPhone = data.receiverPhone || null;
       let receiverEmail = data.receiverEmail || null;
 
-      // Récupérer les informations depuis le client
       if (receiverAccount.clients) {
         const client = receiverAccount.clients;
 
-        // Récupérer le nom
         if (!data.receiverName) {
           receiverName = client.firstName && client.lastName
             ? `${client.firstName} ${client.lastName}`
             : client.firstName || client.lastName || 'Unknown';
         }
 
-        // Récupérer le téléphone
         if (!data.receiverPhone && client.phone) {
           receiverPhone = client.phone;
         }
 
-        // Récupérer l'email
         if (!data.receiverEmail && client.email) {
           receiverEmail = client.email;
         }
@@ -334,22 +330,24 @@ export class TransactionServiceService {
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
-      await this.prisma.$transaction([
-        this.prisma.account.update({
+      await this.prisma.$transaction(async (prisma) => {
+        await prisma.account.update({
           where: { id: data.senderAccountId },
           data: {
             balance: new Decimal(newSenderBalance),
             updatedAt: new Date(),
           },
-        }),
-        this.prisma.account.update({
+        });
+
+        await prisma.account.update({
           where: { id: data.receiverAccountId },
           data: {
             balance: new Decimal(newReceiverBalance),
             updatedAt: new Date(),
           },
-        }),
-        this.prisma.transaction.create({
+        });
+
+        await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.senderAccountId,
@@ -363,8 +361,9 @@ export class TransactionServiceService {
             status: transactions_status.COMPLETED,
             movement: transactions_movement.DEBIT,
           },
-        }),
-        this.prisma.transaction.create({
+        });
+
+        await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.receiverAccountId,
@@ -378,17 +377,18 @@ export class TransactionServiceService {
             status: transactions_status.COMPLETED,
             movement: transactions_movement.CREDIT,
           },
-        }),
-        this.prisma.transfer.update({
+        });
+
+        await prisma.transfer.update({
           where: { id: transfer.id },
           data: {
             status: transfers_status.COMPLETED,
             completedAt: new Date(),
           },
-        }),
-      ]);
+        });
+      });
 
-      // 8. 🔥 ENREGISTREMENT DU BÉNÉFICIAIRE 🔥
+      // 8. Enregistrement du bénéficiaire
       if (shouldSaveBeneficiary && receiverAccountNumber && receiverName) {
         try {
           await this.saveBeneficiary(
