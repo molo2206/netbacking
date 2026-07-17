@@ -1547,17 +1547,28 @@ export class ApiGatewayController {
     @Param('accountId') accountId: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('type') type?: transactions_type,
+    @Query('status') status?: transactions_status,
     @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
+
     const lang = langHeader || 'fr';
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
+
     return this.sendTransactionMessage(
       'transaction.getByAccount',
-      { accountId, page: pageNum, limit: limitNum, lang },
+      {
+        accountId,
+        page: pageNum,
+        limit: limitNum,
+        type: type,
+        status: status,
+        lang
+      },
       'Failed to get transactions',
       HttpStatus.INTERNAL_SERVER_ERROR,
     );

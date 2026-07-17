@@ -870,6 +870,7 @@ export class TransactionServiceService {
     };
   }
 
+
   // ========================= RÉCUPÉRATION DES TRANSACTIONS =========================
   async getTransactionById(id: string, lang: string = 'fr') {
     const transaction = await this.prisma.transaction.findUnique({
@@ -999,48 +1000,63 @@ export class TransactionServiceService {
     const limit = params?.limit || 10;
     const skip = (page - 1) * limit;
 
-    const where: any = { accountId };
-    if (params?.type) where.type = params.type;
-    if (params?.status) where.status = params.status;
+    try {
+      const where: any = { accountId };
+      if (params?.type) where.type = params.type;
+      if (params?.status) where.status = params.status;
 
-    const [transactions, total] = await Promise.all([
-      this.prisma.transaction.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          account: {
-            include: {
-              clients: true,
-            },
-          },
-          transfer: {
-            include: {
-              senderAccount: {
-                include: {
-                  clients: true,
-                },
-              },
-              receiverAccount: {
-                include: {
-                  clients: true,
-                },
+      const [transactions, total] = await Promise.all([
+        this.prisma.transaction.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+          include: {
+            account: {
+              include: {
+                clients: true,
               },
             },
+            transfer: {
+              include: {
+                senderAccount: {
+                  include: {
+                    clients: true,
+                  },
+                },
+                receiverAccount: {
+                  include: {
+                    clients: true,
+                  },
+                },
+              },
+            },
           },
+        }),
+        this.prisma.transaction.count({ where }),
+      ]);
+
+      return {
+        success: true,
+        message: this.i18nService.translate('transactions_list_success', lang),
+        data: {
+          data: transactions,
+          total: total,
+          page: page,
+          limit: limit,
+          totalPages: Math.ceil(total / limit),
+          hasNextPage: page * limit < total,
+          hasPreviousPage: page > 1,
         },
-      }),
-      this.prisma.transaction.count({ where }),
-    ]);
-
-    return {
-      data: transactions,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      };
+    } catch (error) {
+      console.error('[Get Transactions By Account] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('transactions_list_failed', lang),
+        statusCode: 500,
+      });
+    }
   }
 
   // Dans TransactionServiceService

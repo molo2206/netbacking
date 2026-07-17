@@ -157,15 +157,33 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
-      return await this.transactionService.getTransactionsByAccount(data.accountId, {
-        page: data.page,
-        limit: data.limit,
-        type: data.type,
-        status: data.status,
-        lang: data.lang,
-      });
+      if (!data.accountId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.getTransactionsByAccount(
+        data.accountId,
+        {
+          page: data.page || 1,
+          limit: data.limit || 10,
+          type: data.type,
+          status: data.status,
+          lang: data.lang || 'fr',
+        }
+      );
+
+      return {
+        success: true,
+        message: result.message || 'Liste des transactions récupérée avec succès',
+        data: result.data,
+      };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getTransactionsByAccount error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Failed to get transactions',
