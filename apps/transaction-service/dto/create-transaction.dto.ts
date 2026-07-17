@@ -1,6 +1,6 @@
 // apps/transaction-service/src/dto/create-transaction.dto.ts
 
-import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min, IsBoolean } from 'class-validator';
 import { transactions_type, transactions_status, transfers_type, transfers_platform, transactions_movement } from '@prisma/client';
 
 export class CreateTransactionDto {
