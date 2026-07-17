@@ -1002,6 +1002,7 @@ export class UserServiceService {
       });
     }
 
+    // Vérifier que l'utilisateur existe
     const userExists = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true },
@@ -1017,6 +1018,7 @@ export class UserServiceService {
 
     const hashedPin = crypto.createHash('sha256').update(pin).digest('hex');
 
+    // Mettre à jour le PIN
     await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -1027,6 +1029,8 @@ export class UserServiceService {
       },
     });
 
+    // ✅ Récupérer l'utilisateur avec ses relations
+    // La relation est User → clients (via clientId) → accounts
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -1034,12 +1038,9 @@ export class UserServiceService {
           where: { isActive: true },
           orderBy: { createdAt: 'desc' },
         },
-        accounts: {
-          orderBy: { isMain: 'desc' },
-        },
         user_settings: true,
       },
-    }) as any; // ✅ Utilisation de 'as any' pour éviter les erreurs de typage
+    });
 
     if (!user) {
       throw new RpcException({
@@ -1049,6 +1050,26 @@ export class UserServiceService {
       });
     }
 
+    // ✅ Récupérer les comptes séparément via clientId
+    let accounts: any[] = [];
+    if (user.clientId) {
+      accounts = await this.prisma.account.findMany({
+        where: { clientId: user.clientId },
+        orderBy: { isMain: 'desc' },
+        select: {
+          id: true,
+          clientId: true,
+          accountType: true,
+          balance: true,
+          currency: true,
+          status: true,
+          isMain: true,
+          accountNumber: true,
+        },
+      });
+    }
+
+    // ✅ Construire la réponse
     return {
       message: this.i18nService.translate('pin_changed_success', lang),
       data: {
@@ -1069,7 +1090,7 @@ export class UserServiceService {
         twoFactorSecret: user.twoFactorSecret,
         lastLoginAt: user.lastLoginAt,
         pinStatus: user.pinStatus,
-        accounts: user.accounts?.map((account: any) => ({
+        accounts: accounts.map((account: any) => ({
           id: account.id,
           clientId: account.clientId,
           accountType: account.accountType,
@@ -1078,7 +1099,7 @@ export class UserServiceService {
           status: account.status,
           isMain: account.isMain,
           accountNumber: account.accountNumber,
-        })) || [],
+        })),
         settings: user.user_settings ? {
           language: user.user_settings.language,
           theme: user.user_settings.theme,
