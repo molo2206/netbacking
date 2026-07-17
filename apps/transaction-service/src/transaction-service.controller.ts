@@ -32,6 +32,7 @@ export class TransactionServiceController {
     platform?: transfers_platform;
     initiatedBy: string;
     lang?: string;
+    saveBeneficiary?: boolean;  // ✅ Ajout du champ
   }) {
     try {
       if (!data.initiatedBy) {
@@ -56,6 +57,7 @@ export class TransactionServiceController {
         platform: data.platform,
         initiatedBy: data.initiatedBy,
         lang: data.lang || 'fr',
+        saveBeneficiary: data.saveBeneficiary,  // ✅ Passage du champ
       });
 
       return {

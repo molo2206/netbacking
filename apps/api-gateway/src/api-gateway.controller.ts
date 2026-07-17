@@ -1510,6 +1510,7 @@ export class ApiGatewayController {
       currency?: string;
       type?: transfers_type;
       platform?: transfers_platform;
+      saveBeneficiary?: boolean;  // ✅ Ajout du champ
     },
     @Headers('lang') langHeader?: string,
   ) {
@@ -1534,6 +1535,7 @@ export class ApiGatewayController {
         platform: body.platform,
         initiatedBy: currentUser.id,
         lang,
+        saveBeneficiary: body.saveBeneficiary,  // ✅ Passage du champ
       },
       'Transfer failed',
       HttpStatus.BAD_REQUEST,

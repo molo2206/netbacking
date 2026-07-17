@@ -42,11 +42,11 @@ export class CreateTransactionDto {
 export class TransferDto {
   @IsNotEmpty()
   @IsString()
-  senderAccountNumber: string;  // ✅ Changé de senderAccountId à senderAccountNumber
+  senderAccountNumber: string;
 
   @IsNotEmpty()
   @IsString()
-  receiverAccountNumber: string; // ✅ Changé de receiverAccountId à receiverAccountNumber
+  receiverAccountNumber: string;
 
   @IsOptional()
   @IsString()
@@ -88,6 +88,10 @@ export class TransferDto {
   @IsOptional()
   @IsString()
   initiatedBy?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  saveBeneficiary?: boolean;  // ✅ Ajout du champ
 }
 
 export class DepositDto {
