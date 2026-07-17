@@ -197,10 +197,10 @@ export class TransactionServiceService {
     platform?: transfers_platform;
     initiatedBy: string;
     lang?: string;
-    saveBeneficiary?: boolean; // Option pour activer/désactiver la sauvegarde
+    saveBeneficiary?: boolean;
   }) {
     const lang = data.lang || 'fr';
-    const shouldSaveBeneficiary = data.saveBeneficiary !== false; // Par défaut true
+    const shouldSaveBeneficiary = data.saveBeneficiary !== false;
 
     try {
       // 1. Récupération du compte expéditeur
@@ -208,7 +208,6 @@ export class TransactionServiceService {
         where: { id: data.senderAccountId },
         include: {
           clients: true,
-          user: true
         },
       });
 
@@ -233,7 +232,6 @@ export class TransactionServiceService {
         where: { id: data.receiverAccountId },
         include: {
           clients: true,
-          user: true
         },
       });
 
@@ -280,38 +278,33 @@ export class TransactionServiceService {
       // 5. Préparation des informations du bénéficiaire
       const reference = this.generateTransferReference();
 
-      let receiverName = data.receiverName;
-      let receiverAccountNumber: string;
-      let receiverBankName: string | undefined;
-      let receiverPhone = data.receiverPhone;
-      let receiverEmail = data.receiverEmail;
+      // ✅ Initialiser les variables avec des valeurs par défaut
+      let receiverName = data.receiverName || 'Unknown';
+      let receiverAccountNumber = receiverAccount.accountNumber || `ACCT-${receiverAccount.id.substring(0, 8)}`;
+      let receiverBankName = 'Banque inconnue'; // Valeur par défaut
+      let receiverPhone = data.receiverPhone || null;
+      let receiverEmail = data.receiverEmail || null;
 
-      // Récupérer les informations du compte bénéficiaire
-      if (receiverAccount) {
-        // Adaptez selon votre modèle Account
-        receiverAccountNumber = receiverAccount.accountNumber ||
-          receiverAccount.number ||
-          `ACCT-${receiverAccount.id.substring(0, 8)}`;
-
-        receiverBankName = receiverAccount.bankName ||
-          receiverAccount.bank?.name ||
-          'Banque inconnue';
-      }
-
-      // Récupérer le nom du bénéficiaire
-      if (!receiverName && receiverAccount.clients) {
+      // Récupérer les informations depuis le client
+      if (receiverAccount.clients) {
         const client = receiverAccount.clients;
-        receiverName = client.firstName && client.lastName
-          ? `${client.firstName} ${client.lastName}`
-          : client.companyName || 'Unknown';
-      }
 
-      // Récupérer téléphone et email si non fournis
-      if (!receiverPhone && receiverAccount.clients?.phone) {
-        receiverPhone = receiverAccount.clients.phone;
-      }
-      if (!receiverEmail && receiverAccount.clients?.email) {
-        receiverEmail = receiverAccount.clients.email;
+        // Récupérer le nom
+        if (!data.receiverName) {
+          receiverName = client.firstName && client.lastName
+            ? `${client.firstName} ${client.lastName}`
+            : client.firstName || client.lastName || 'Unknown';
+        }
+
+        // Récupérer le téléphone
+        if (!data.receiverPhone && client.phone) {
+          receiverPhone = client.phone;
+        }
+
+        // Récupérer l'email
+        if (!data.receiverEmail && client.email) {
+          receiverEmail = client.email;
+        }
       }
 
       // 6. Création du transfert
@@ -321,7 +314,7 @@ export class TransactionServiceService {
           reference,
           senderAccountId: data.senderAccountId,
           receiverAccountId: data.receiverAccountId,
-          receiverName: receiverName || 'Unknown',
+          receiverName: receiverName,
           receiverPhone: receiverPhone,
           receiverEmail: receiverEmail,
           amount: new Decimal(data.amount),
@@ -341,7 +334,7 @@ export class TransactionServiceService {
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
-      const [senderTx, receiverTx] = await this.prisma.$transaction([
+      await this.prisma.$transaction([
         this.prisma.account.update({
           where: { id: data.senderAccountId },
           data: {
@@ -366,7 +359,7 @@ export class TransactionServiceService {
             balanceBefore: new Decimal(senderBalance),
             balanceAfter: new Decimal(newSenderBalance),
             reference: `DEBIT-${reference}`,
-            description: `Transfer to ${receiverName || 'Unknown'}`,
+            description: `Transfer to ${receiverName}`,
             status: transactions_status.COMPLETED,
             movement: transactions_movement.DEBIT,
           },
@@ -399,18 +392,16 @@ export class TransactionServiceService {
       if (shouldSaveBeneficiary && receiverAccountNumber && receiverName) {
         try {
           await this.saveBeneficiary(
-            data.initiatedBy, // userId
-            receiverAccountNumber, // accountNumber
-            receiverName, // accountName
-            receiverBankName, // bankName
-            receiverPhone, // phone
-            receiverEmail, // email
-            receiverName // nickname (utilise le nom par défaut)
+            data.initiatedBy,
+            receiverAccountNumber,
+            receiverName,
+            receiverBankName,
+            receiverPhone || undefined,
+            receiverEmail || undefined,
+            receiverName
           );
         } catch (beneficiaryError) {
-          // Log l'erreur mais ne bloque pas le transfert
           console.error('[Transfer] Failed to save beneficiary:', beneficiaryError);
-          // Optionnel: vous pouvez envoyer une notification à l'admin
         }
       }
 
@@ -472,7 +463,7 @@ export class TransactionServiceService {
           {
             amount: data.amount,
             fees: fees,
-            receiverName: receiverName || 'Unknown',
+            receiverName: receiverName,
             reference: reference,
             currency: currency,
           },
