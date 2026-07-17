@@ -1043,7 +1043,8 @@ export class TransactionServiceService {
     };
   }
 
-  async getTransactionsByClient(clientId: string, params?: {
+  // Dans TransactionServiceService
+  async getTransactionsByUser(userId: string, params?: {
     page?: number;
     limit?: number;
     type?: transactions_type;
@@ -1056,8 +1057,31 @@ export class TransactionServiceService {
     const skip = (page - 1) * limit;
 
     try {
+      // 1. Récupérer l'utilisateur avec son clientId
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { clientId: true },
+      });
+
+      if (!user || !user.clientId) {
+        return {
+          success: true,
+          message: this.i18nService.translate('transactions_list_success', lang),
+          data: {
+            data: [],
+            total: 0,
+            page: page,
+            limit: limit,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        };
+      }
+
+      // 2. Récupérer les comptes du client
       const accounts = await this.prisma.account.findMany({
-        where: { clientId },
+        where: { clientId: user.clientId },
         select: { id: true },
       });
 
@@ -1128,7 +1152,7 @@ export class TransactionServiceService {
         },
       };
     } catch (error) {
-      console.error('[Get Transactions By Client] Error:', error);
+      console.error('[Get Transactions By User] Error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || this.i18nService.translate('transactions_list_failed', lang),

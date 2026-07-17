@@ -174,9 +174,9 @@ export class TransactionServiceController {
     }
   }
 
-  @MessagePattern('transaction.getByClient')
-  async getTransactionsByClient(@Payload() data: {
-    clientId: string;
+  @MessagePattern('transaction.getByUser')
+  async getTransactionsByUser(@Payload() data: {
+    userId: string;
     page?: number;
     limit?: number;
     type?: transactions_type;
@@ -184,15 +184,33 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
-      return await this.transactionService.getTransactionsByClient(data.clientId, {
-        page: data.page,
-        limit: data.limit,
-        type: data.type,
-        status: data.status,
-        lang: data.lang,
-      });
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.getTransactionsByUser(
+        data.userId,
+        {
+          page: data.page || 1,
+          limit: data.limit || 10,
+          type: data.type,
+          status: data.status,
+          lang: data.lang || 'fr',
+        }
+      );
+
+      return {
+        success: true,
+        message: result.message || 'Liste des transactions récupérée avec succès',
+        data: result.data,
+      };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getTransactionsByUser error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Failed to get transactions',
@@ -200,7 +218,6 @@ export class TransactionServiceController {
       });
     }
   }
-
   // ==================== TRANSFERTS ====================
 
   @MessagePattern('transaction.getTransferById')

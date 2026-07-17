@@ -36,6 +36,7 @@ import { UpdateResourceDto } from 'apps/user-service/resources/dto/update-resour
 import { AssignMultipleResourcesDto } from 'apps/user-service/dto/assign-resource.dto';
 import { firstValueFrom, catchError, timeout } from 'rxjs';
 import { TransferDto } from 'apps/transaction-service/dto/create-transaction.dto';
+import { transactions_status, transactions_type } from '@prisma/client';
 
 @Controller()
 export class ApiGatewayController {
@@ -1561,7 +1562,6 @@ export class ApiGatewayController {
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
   }
-
   @Get('transactions/client/me')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getMyTransactions(
@@ -1579,10 +1579,25 @@ export class ApiGatewayController {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
 
+    // ✅ Récupérer le clientId de l'utilisateur
+    const user = await this.sendUserMessage(
+      'get_user',
+      { id: currentUser.id },
+      'User not found',
+      HttpStatus.NOT_FOUND
+    );
+
+    // ✅ Utiliser clientId au lieu de user.id
+    const clientId = user?.data?.clientId;
+
+    if (!clientId) {
+      throw new HttpException('Client not found for this user', HttpStatus.NOT_FOUND);
+    }
+
     return this.sendTransactionMessage(
       'transaction.getByClient',
       {
-        clientId: currentUser.id,
+        clientId: clientId, // ✅ Utiliser le clientId
         page: pageNum,
         limit: limitNum,
         type: type,
@@ -1593,7 +1608,6 @@ export class ApiGatewayController {
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
   }
-
   @Get('transactions/balance/:accountId')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getBalance(
