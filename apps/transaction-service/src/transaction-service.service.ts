@@ -294,8 +294,8 @@ export class TransactionServiceService {
         }
       }
 
-      // ✅ Créer un transfert principal
-      const mainTransfer = await this.prisma.transfer.create({
+      // 1. Créer le transfert
+      const transfer = await this.prisma.transfer.create({
         data: {
           id: crypto.randomUUID(),
           reference,
@@ -320,12 +320,9 @@ export class TransactionServiceService {
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
-      // ✅ Créer deux transferts avec des IDs différents
-      const debitTransferId = crypto.randomUUID();
-      const creditTransferId = crypto.randomUUID();
-
+      // 2. Mettre à jour les comptes et créer les transactions avec le même transferId
       await this.prisma.$transaction(async (prisma) => {
-        // Mettre à jour les comptes
+        // Mettre à jour le compte expéditeur
         await prisma.account.update({
           where: { id: data.senderAccountId },
           data: {
@@ -334,6 +331,7 @@ export class TransactionServiceService {
           },
         });
 
+        // Mettre à jour le compte bénéficiaire
         await prisma.account.update({
           where: { id: data.receiverAccountId },
           data: {
@@ -342,12 +340,12 @@ export class TransactionServiceService {
           },
         });
 
-        // ✅ Transaction DEBIT avec son propre transferId
+        // ✅ Transaction DEBIT avec le transfer.id
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.senderAccountId,
-            transferId: debitTransferId, // ID unique pour le débit
+            transferId: transfer.id, // Utiliser l'ID du transfert créé
             type: transactions_type.TRANSFER,
             amount: new Decimal(totalAmount),
             balanceBefore: new Decimal(senderBalance),
@@ -359,12 +357,12 @@ export class TransactionServiceService {
           },
         });
 
-        // ✅ Transaction CREDIT avec son propre transferId
+        // ✅ Transaction CREDIT avec le transfer.id
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.receiverAccountId,
-            transferId: creditTransferId, // ID unique pour le crédit
+            transferId: transfer.id, // Utiliser le même ID
             type: transactions_type.TRANSFER,
             amount: new Decimal(data.amount),
             balanceBefore: new Decimal(receiverBalance),
@@ -376,9 +374,9 @@ export class TransactionServiceService {
           },
         });
 
-        // Mettre à jour le transfert principal
+        // Mettre à jour le statut du transfert
         await prisma.transfer.update({
-          where: { id: mainTransfer.id },
+          where: { id: transfer.id },
           data: {
             status: transfers_status.COMPLETED,
             completedAt: new Date(),
@@ -403,6 +401,7 @@ export class TransactionServiceService {
         }
       }
 
+      // Audit log
       await this.logAudit(
         data.initiatedBy,
         'TRANSFER',
@@ -416,11 +415,12 @@ export class TransactionServiceService {
           beneficiarySaved: shouldSaveBeneficiary,
         },
         'TRANSFER',
-        mainTransfer.id,
+        transfer.id,
       );
 
+      // Récupérer le transfert complété
       const completedTransfer = await this.prisma.transfer.findUnique({
-        where: { id: mainTransfer.id },
+        where: { id: transfer.id },
         include: {
           senderAccount: {
             include: { clients: true },
@@ -441,6 +441,7 @@ export class TransactionServiceService {
         });
       }
 
+      // Notifications
       try {
         const senderLang = await this.getUserLanguage(data.initiatedBy);
 
@@ -459,7 +460,7 @@ export class TransactionServiceService {
             currency: currency,
           },
           'TRANSFER',
-          mainTransfer.id,
+          transfer.id,
           senderLang,
         );
 
@@ -479,7 +480,7 @@ export class TransactionServiceService {
                 currency: currency,
               },
               'TRANSFER',
-              mainTransfer.id,
+              transfer.id,
               receiverLang,
             );
           }
