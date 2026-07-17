@@ -84,6 +84,65 @@ export class TransactionServiceService {
     return settings?.push_notifications ?? true;
   }
 
+  private async saveBeneficiary(
+    userId: string,
+    accountNumber: string,
+    accountName: string,
+    bankName: string | undefined,
+    phone: string | undefined,
+    email: string | undefined,
+    nickname: string
+  ) {
+    try {
+      // Vérifier si le bénéficiaire existe déjà
+      const existingBeneficiary = await this.prisma.beneficiary.findUnique({
+        where: {
+          userId_accountNumber: {
+            userId: userId,
+            accountNumber: accountNumber,
+          },
+        },
+      });
+
+      if (!existingBeneficiary) {
+        // Créer le bénéficiaire
+        await this.prisma.beneficiary.create({
+          data: {
+            id: crypto.randomUUID(),
+            userId: userId,
+            accountNumber: accountNumber,
+            accountName: accountName,
+            bankName: bankName || null,
+            phone: phone || null,
+            email: email || null,
+            nickname: nickname || accountName,
+            isFavorite: false,
+          },
+        });
+      } else {
+        // Mettre à jour les informations du bénéficiaire existant
+        await this.prisma.beneficiary.update({
+          where: {
+            userId_accountNumber: {
+              userId: userId,
+              accountNumber: accountNumber,
+            },
+          },
+          data: {
+            accountName: accountName,
+            bankName: bankName || existingBeneficiary.bankName,
+            phone: phone || existingBeneficiary.phone,
+            email: email || existingBeneficiary.email,
+            updatedAt: new Date(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error('[Save Beneficiary] Error:', error);
+      // Ne pas bloquer le transfert si l'enregistrement du bénéficiaire échoue
+    }
+  }
+
   private async getUserLanguage(userId: string): Promise<string> {
     const settings = await this.prisma.user_settings.findUnique({
       where: { user_id: userId },
@@ -138,13 +197,19 @@ export class TransactionServiceService {
     platform?: transfers_platform;
     initiatedBy: string;
     lang?: string;
+    saveBeneficiary?: boolean; // Option pour activer/désactiver la sauvegarde
   }) {
     const lang = data.lang || 'fr';
+    const shouldSaveBeneficiary = data.saveBeneficiary !== false; // Par défaut true
 
     try {
+      // 1. Récupération du compte expéditeur
       const senderAccount = await this.prisma.account.findUnique({
         where: { id: data.senderAccountId },
-        include: { clients: true },
+        include: {
+          clients: true,
+          user: true
+        },
       });
 
       if (!senderAccount) {
@@ -163,9 +228,13 @@ export class TransactionServiceService {
         });
       }
 
+      // 2. Récupération du compte bénéficiaire
       const receiverAccount = await this.prisma.account.findUnique({
         where: { id: data.receiverAccountId },
-        include: { clients: true },
+        include: {
+          clients: true,
+          user: true
+        },
       });
 
       if (!receiverAccount) {
@@ -184,6 +253,7 @@ export class TransactionServiceService {
         });
       }
 
+      // 3. Vérification des devises
       const currency = data.currency || senderAccount.currency || 'XAF';
 
       if (senderAccount.currency !== receiverAccount.currency) {
@@ -194,6 +264,7 @@ export class TransactionServiceService {
         });
       }
 
+      // 4. Vérification du solde
       const senderBalance = senderAccount.balance?.toNumber() || 0;
       const fees = data.fees || 0;
       const totalAmount = data.amount + fees;
@@ -206,16 +277,44 @@ export class TransactionServiceService {
         });
       }
 
+      // 5. Préparation des informations du bénéficiaire
       const reference = this.generateTransferReference();
 
       let receiverName = data.receiverName;
+      let receiverAccountNumber: string;
+      let receiverBankName: string | undefined;
+      let receiverPhone = data.receiverPhone;
+      let receiverEmail = data.receiverEmail;
+
+      // Récupérer les informations du compte bénéficiaire
+      if (receiverAccount) {
+        // Adaptez selon votre modèle Account
+        receiverAccountNumber = receiverAccount.accountNumber ||
+          receiverAccount.number ||
+          `ACCT-${receiverAccount.id.substring(0, 8)}`;
+
+        receiverBankName = receiverAccount.bankName ||
+          receiverAccount.bank?.name ||
+          'Banque inconnue';
+      }
+
+      // Récupérer le nom du bénéficiaire
       if (!receiverName && receiverAccount.clients) {
         const client = receiverAccount.clients;
         receiverName = client.firstName && client.lastName
           ? `${client.firstName} ${client.lastName}`
-          : 'Unknown';
+          : client.companyName || 'Unknown';
       }
 
+      // Récupérer téléphone et email si non fournis
+      if (!receiverPhone && receiverAccount.clients?.phone) {
+        receiverPhone = receiverAccount.clients.phone;
+      }
+      if (!receiverEmail && receiverAccount.clients?.email) {
+        receiverEmail = receiverAccount.clients.email;
+      }
+
+      // 6. Création du transfert
       const transfer = await this.prisma.transfer.create({
         data: {
           id: crypto.randomUUID(),
@@ -223,8 +322,8 @@ export class TransactionServiceService {
           senderAccountId: data.senderAccountId,
           receiverAccountId: data.receiverAccountId,
           receiverName: receiverName || 'Unknown',
-          receiverPhone: data.receiverPhone,
-          receiverEmail: data.receiverEmail,
+          receiverPhone: receiverPhone,
+          receiverEmail: receiverEmail,
           amount: new Decimal(data.amount),
           fees: new Decimal(fees),
           totalAmount: new Decimal(totalAmount),
@@ -237,6 +336,7 @@ export class TransactionServiceService {
         },
       });
 
+      // 7. Mise à jour des soldes et création des transactions
       const newSenderBalance = senderBalance - totalAmount;
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
@@ -295,6 +395,26 @@ export class TransactionServiceService {
         }),
       ]);
 
+      // 8. 🔥 ENREGISTREMENT DU BÉNÉFICIAIRE 🔥
+      if (shouldSaveBeneficiary && receiverAccountNumber && receiverName) {
+        try {
+          await this.saveBeneficiary(
+            data.initiatedBy, // userId
+            receiverAccountNumber, // accountNumber
+            receiverName, // accountName
+            receiverBankName, // bankName
+            receiverPhone, // phone
+            receiverEmail, // email
+            receiverName // nickname (utilise le nom par défaut)
+          );
+        } catch (beneficiaryError) {
+          // Log l'erreur mais ne bloque pas le transfert
+          console.error('[Transfer] Failed to save beneficiary:', beneficiaryError);
+          // Optionnel: vous pouvez envoyer une notification à l'admin
+        }
+      }
+
+      // 9. Audit log
       await this.logAudit(
         data.initiatedBy,
         'TRANSFER',
@@ -305,11 +425,13 @@ export class TransactionServiceService {
           fees: fees,
           reference,
           currency,
+          beneficiarySaved: shouldSaveBeneficiary,
         },
         'TRANSFER',
         transfer.id,
       );
 
+      // 10. Récupération du transfert complété
       const completedTransfer = await this.prisma.transfer.findUnique({
         where: { id: transfer.id },
         include: {
@@ -336,6 +458,7 @@ export class TransactionServiceService {
         });
       }
 
+      // 11. Notifications
       try {
         const senderLang = await this.getUserLanguage(data.initiatedBy);
 
@@ -383,6 +506,7 @@ export class TransactionServiceService {
         console.error('[Notifications] Transfer notification error:', notifError);
       }
 
+      // 12. Retour
       return {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
@@ -401,6 +525,7 @@ export class TransactionServiceService {
           createdAt: completedTransfer.createdAt,
           senderBalance: newSenderBalance,
           receiverBalance: newReceiverBalance,
+          beneficiarySaved: shouldSaveBeneficiary,
         },
       };
     } catch (error) {
@@ -1203,6 +1328,116 @@ export class TransactionServiceService {
       })),
       recent,
     };
+  }
+
+  async listBeneficiaries(data: {
+    userId: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+    const page = data.page || 1;
+    const limit = data.limit || 10;
+    const skip = (page - 1) * limit;
+
+    try {
+      // Construire les filtres
+      const where: any = {
+        userId: data.userId,
+      };
+
+      // Filtre par recherche
+      if (data.search) {
+        where.OR = [
+          { accountName: { contains: data.search, mode: 'insensitive' } },
+          { accountNumber: { contains: data.search, mode: 'insensitive' } },
+          { bankName: { contains: data.search, mode: 'insensitive' } },
+          { nickname: { contains: data.search, mode: 'insensitive' } },
+          { phone: { contains: data.search, mode: 'insensitive' } },
+          { email: { contains: data.search, mode: 'insensitive' } },
+        ];
+      }
+
+      // Filtre par favoris
+      if (data.isFavorite !== undefined) {
+        where.isFavorite = data.isFavorite;
+      }
+
+      // Récupérer les bénéficiaires avec pagination
+      const [beneficiaries, total] = await this.prisma.$transaction([
+        this.prisma.beneficiary.findMany({
+          where,
+          orderBy: {
+            createdAt: 'desc', // Ordre décroissant (du plus récent au plus ancien)
+          },
+          skip,
+          take: limit,
+        }),
+        this.prisma.beneficiary.count({ where }),
+      ]);
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiaries_list_success', lang),
+        data: {
+          data: beneficiaries, // Le tableau des bénéficiaires
+          total: total, // Nombre total
+          page: page, // Page actuelle
+          limit: limit, // Nombre par page
+          totalPages: Math.ceil(total / limit), // Nombre total de pages
+        },
+      };
+    } catch (error) {
+      console.error('[List Beneficiaries] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiaries_list_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  async getBeneficiaryById(id: string, userId: string, lang: string) {
+    try {
+      const beneficiary = await this.prisma.beneficiary.findUnique({
+        where: {
+          id: id,
+        },
+      });
+
+      if (!beneficiary) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // Vérifier que le bénéficiaire appartient à l'utilisateur
+      if (beneficiary.userId !== userId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiary_found', lang),
+        data: beneficiary,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiary_get_failed', lang),
+        statusCode: 500,
+      });
+    }
   }
 
   // ========================= HEALTH CHECK =========================

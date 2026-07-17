@@ -1799,6 +1799,65 @@ export class ApiGatewayController {
       HttpStatus.NOT_FOUND
     );
   }
+
+  @Get('beneficiaries')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async listBeneficiaries(
+    @CurrentUser() currentUser: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('isFavorite') isFavorite?: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const isFavoriteBool = isFavorite !== undefined ? isFavorite === 'true' : undefined;
+
+    return this.sendTransactionMessage(
+      'transaction.listBeneficiaries',
+      {
+        userId: currentUser.id,
+        page: pageNum,
+        limit: limitNum,
+        search,
+        isFavorite: isFavoriteBool,
+        lang,
+      },
+      'Failed to list beneficiaries',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Get('beneficiaries/:id')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getBeneficiary(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendTransactionMessage(
+      'transaction.getBeneficiaryById',
+      {
+        id,
+        userId: currentUser.id,
+        lang,
+      },
+      'Beneficiary not found',
+      HttpStatus.NOT_FOUND,
+    );
+  }
   // ==================== HEALTH CHECK ====================
 
   @Get('health')

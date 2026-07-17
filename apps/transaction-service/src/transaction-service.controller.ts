@@ -287,6 +287,90 @@ export class TransactionServiceController {
     }
   }
 
+  // ==================== BÉNÉFICIAIRES ====================
+  @MessagePattern('transaction.listBeneficiaries')
+  async listBeneficiaries(@Payload() data: {
+    userId: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    try {
+      // Vérifier que userId est présent
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      // Appeler le service
+      const result = await this.transactionService.listBeneficiaries({
+        userId: data.userId,
+        page: data.page || 1,
+        limit: data.limit || 10,
+        search: data.search,
+        isFavorite: data.isFavorite,
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Liste des bénéficiaires récupérée avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] listBeneficiaries error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to list beneficiaries',
+        statusCode: error.statusCode || 500,
+      });
+    }
+  }
+
+  @MessagePattern('transaction.getBeneficiaryById')
+  async getBeneficiaryById(@Payload() data: {
+    id: string;
+    userId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.id) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Beneficiary ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      return await this.transactionService.getBeneficiaryById(
+        data.id,
+        data.userId,
+        data.lang || 'fr'
+      );
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get beneficiary',
+        statusCode: 500,
+      });
+    }
+  }
+
   // ==================== HEALTH CHECK ====================
 
   @MessagePattern('transaction.health')
