@@ -1002,7 +1002,6 @@ export class UserServiceService {
       });
     }
 
-    // Vérifier que l'utilisateur existe
     const userExists = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true },
@@ -1017,7 +1016,8 @@ export class UserServiceService {
     }
 
     const hashedPin = crypto.createHash('sha256').update(pin).digest('hex');
-    const updatedUser = await this.prisma.user.update({
+
+    await this.prisma.user.update({
       where: { id: userId },
       data: {
         pin: hashedPin,
@@ -1027,9 +1027,75 @@ export class UserServiceService {
       },
     });
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        sessions: {
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        accounts: {
+          orderBy: { isMain: 'desc' },
+        },
+        user_settings: true,
+      },
+    }) as any; // ✅ Utilisation de 'as any' pour éviter les erreurs de typage
+
+    if (!user) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('user_not_found', lang),
+        statusCode: 404,
+      });
+    }
+
     return {
       message: this.i18nService.translate('pin_changed_success', lang),
-      data: this.toResponse(updatedUser),
+      data: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        clientId: user.clientId,
+        platform: user.platform,
+        isEmailVerified: user.isEmailVerified,
+        isPhoneVerified: user.isPhoneVerified,
+        isTwoFactorEnabled: user.isTwoFactorEnabled,
+        twoFactorSecret: user.twoFactorSecret,
+        lastLoginAt: user.lastLoginAt,
+        pinStatus: user.pinStatus,
+        accounts: user.accounts?.map((account: any) => ({
+          id: account.id,
+          clientId: account.clientId,
+          accountType: account.accountType,
+          balance: account.balance?.toString() || '0',
+          currency: account.currency,
+          status: account.status,
+          isMain: account.isMain,
+          accountNumber: account.accountNumber,
+        })) || [],
+        settings: user.user_settings ? {
+          language: user.user_settings.language,
+          theme: user.user_settings.theme,
+          email_notifications: user.user_settings.email_notifications,
+          sms_notifications: user.user_settings.sms_notifications,
+          push_notifications: user.user_settings.push_notifications,
+          two_factor_enabled: user.user_settings.two_factor_enabled,
+        } : null,
+        sessions: user.sessions?.map((session: any) => ({
+          id: session.id,
+          device_info: session.deviceName,
+          ip_address: session.ipAddress,
+          last_activity: session.lastActivity,
+          created_at: session.createdAt,
+          expires_at: session.expiresAt,
+        })) || [],
+      },
     };
   }
 
