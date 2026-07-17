@@ -279,7 +279,7 @@ export class TransactionServiceService {
         throw new RpcException({
           status: 'error',
           message: this.i18nService.translate('pin_invalid', lang, { attempts: newAttempts }),
-          statusCode: 403,
+          statusCode: 400,
         });
       }
 
