@@ -144,6 +144,19 @@ export class TransactionServiceService {
     }
   }
 
+  private verifyPin(plainPin: string, hashedPin: string): boolean {
+    try {
+      // Hasher le PIN entré avec SHA-1
+      const hash = crypto.createHash('sha1').update(plainPin).digest('hex');
+
+      // Comparer avec le hash stocké (en ignorant la casse)
+      return hash === hashedPin || hash === hashedPin.toLowerCase();
+    } catch (error) {
+      console.error('[Verify PIN] Error:', error);
+      return false;
+    }
+  }
+
   private async getUserLanguage(userId: string): Promise<string> {
     const settings = await this.prisma.user_settings.findUnique({
       where: { user_id: userId },
@@ -244,7 +257,7 @@ export class TransactionServiceService {
       }
 
       // ✅ Vérification du PIN hashé avec bcrypt - Correction du type null
-      const isPinValid = user.pin ? await bcrypt.compare(data.pin, user.pin) : false;
+      const isPinValid = user.pin ? this.verifyPin(data.pin, user.pin) : false;
 
       if (!isPinValid) {
         const newAttempts = (user.failedPinAttempts || 0) + 1;
