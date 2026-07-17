@@ -93,5 +93,8 @@
   "account_retrieved": "Compte récupéré avec succès",
   "beneficiary_created": "Bénéficiaire créé avec succès",
   "beneficiary_create_failed": "Échec de la création du bénéficiaire",
-  "beneficiary_already_exists": "Ce bénéficiaire existe déjà"
+  "beneficiary_already_exists": "Ce bénéficiaire existe déjà",
+  "balance_retrieved": "Solde récupéré avec succès",
+  "balance_failed": "Échec de la récupération du solde",
+  "account_access_denied": "Accès refusé à ce compte"
 }

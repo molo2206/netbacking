@@ -93,6 +93,8 @@
   "account_retrieved": "Account retrieved successfully",
   "beneficiary_created": "Beneficiary created successfully",
   "beneficiary_create_failed": "Failed to create beneficiary",
-  "beneficiary_already_exists": "This beneficiary already exists"
-  
+  "beneficiary_already_exists": "This beneficiary already exists",
+  "balance_retrieved": "Balance retrieved successfully",
+  "balance_failed": "Failed to retrieve balance",
+  "account_access_denied": "Access denied to this account"
 }

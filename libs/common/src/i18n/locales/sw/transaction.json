@@ -93,5 +93,8 @@
   "account_retrieved": "Akaunti imepatikana kikamilifu",
   "beneficiary_created": "Mpokeaji ameundwa kikamilifu",
   "beneficiary_create_failed": "Imeshindwa kuunda mpokeaji",
-  "beneficiary_already_exists": "Mpokeaji huyu tayari yupo"
+  "beneficiary_already_exists": "Mpokeaji huyu tayari yupo",
+  "balance_retrieved": "Salio limepatikana kikamilifu",
+  "balance_failed": "Imeshindwa kupata salio",
+  "account_access_denied": "Imekataliwa kupata akaunti hii"
 }

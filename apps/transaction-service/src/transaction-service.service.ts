@@ -1897,6 +1897,231 @@ export class TransactionServiceService {
     }
   }
 
+  async getBalance(data: {
+    accountNumber: string;
+    userId: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // 1. Récupérer le compte par son accountNumber
+      const account = await this.prisma.account.findUnique({
+        where: { accountNumber: data.accountNumber },
+        include: {
+          clients: true,
+        },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // 2. Vérifier que l'utilisateur a accès à ce compte
+      // Récupérer l'utilisateur pour vérifier son clientId
+      const user = await this.prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { clientId: true },
+      });
+
+      if (!user) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('user_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // Vérifier que le compte appartient à l'utilisateur
+      if (account.clientId !== user.clientId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      // 3. Calculer les statistiques de la balance
+      const balance = account.balance?.toNumber() || 0;
+
+      // Récupérer les dernières transactions pour le résumé
+      const lastTransactions = await this.prisma.transaction.findMany({
+        where: { accountId: account.id },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          type: true,
+          amount: true,
+          movement: true,
+          status: true,
+          description: true,
+          createdAt: true,
+          reference: true,
+        },
+      });
+
+      // Calculer le total des débits et crédits du jour
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const todayStats = await this.prisma.transaction.aggregate({
+        where: {
+          accountId: account.id,
+          createdAt: {
+            gte: today,
+            lt: tomorrow,
+          },
+          status: transactions_status.COMPLETED,
+        },
+        _sum: {
+          amount: true,
+        },
+      });
+
+      const todayDebit = await this.prisma.transaction.aggregate({
+        where: {
+          accountId: account.id,
+          createdAt: {
+            gte: today,
+            lt: tomorrow,
+          },
+          status: transactions_status.COMPLETED,
+          movement: transactions_movement.DEBIT,
+        },
+        _sum: {
+          amount: true,
+        },
+      });
+
+      const todayCredit = await this.prisma.transaction.aggregate({
+        where: {
+          accountId: account.id,
+          createdAt: {
+            gte: today,
+            lt: tomorrow,
+          },
+          status: transactions_status.COMPLETED,
+          movement: transactions_movement.CREDIT,
+        },
+        _sum: {
+          amount: true,
+        },
+      });
+
+      // Récupérer le nom du client
+      const clientName = account.clients
+        ? `${account.clients.firstName || ''} ${account.clients.lastName || ''}`.trim()
+        : 'Unknown';
+
+      // 4. Retourner la réponse
+      return {
+        success: true,
+        message: this.i18nService.translate('balance_retrieved', lang),
+        data: {
+          account: {
+            id: account.id,
+            accountNumber: account.accountNumber,
+            accountType: account.accountType,
+            clientId: account.clientId,
+            clientName: clientName,
+            currency: account.currency || 'XAF',
+            status: account.status,
+            isMain: account.isMain,
+            createdAt: account.createdAt,
+            updatedAt: account.updatedAt,
+          },
+          balance: {
+            current: balance,
+            formatted: new Intl.NumberFormat('fr-FR', {
+              style: 'currency',
+              currency: account.currency || 'XAF',
+            }).format(balance),
+          },
+          today: {
+            total: todayStats._sum.amount?.toNumber() || 0,
+            debit: todayDebit._sum.amount?.toNumber() || 0,
+            credit: todayCredit._sum.amount?.toNumber() || 0,
+          },
+          lastTransactions: lastTransactions.map(t => ({
+            id: t.id,
+            reference: t.reference,
+            type: t.type,
+            amount: t.amount.toNumber(),
+            movement: t.movement,
+            status: t.status,
+            description: t.description,
+            createdAt: t.createdAt,
+          })),
+        },
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Get Balance] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('balance_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  async getAccountById(data: {
+    accountId: string;
+    userId: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      const account = await this.prisma.account.findUnique({
+        where: { id: data.accountId },
+        include: { clients: true },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // Vérifier que l'utilisateur a accès à ce compte
+      const user = await this.prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { clientId: true },
+      });
+
+      if (!user || account.clientId !== user.clientId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      return {
+        success: true,
+        message: this.i18nService.translate('account_retrieved', lang),
+        data: account,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('account_get_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
   // ========================= HEALTH CHECK =========================
   async healthCheck() {
     return { status: 'ok', service: 'transaction-service' };

@@ -653,6 +653,89 @@ export class TransactionServiceController {
     }
   }
 
+  @MessagePattern('transaction.getBalance')
+  async getBalance(@Payload() data: {
+    accountNumber: string;
+    userId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.accountNumber) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account number is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.getBalance({
+        accountNumber: data.accountNumber,
+        userId: data.userId,
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Balance récupérée avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getBalance error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get balance',
+        statusCode: 500,
+      });
+    }
+  }
+
+  @MessagePattern('transaction.getAccountById')
+  async getAccountById(@Payload() data: {
+    accountId: string;
+    userId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.accountId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.getAccountById(data);
+      return {
+        success: true,
+        message: result.message || 'Compte récupéré avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get account',
+        statusCode: 500,
+      });
+    }
+  }
   // ==================== HEALTH CHECK ====================
 
   @MessagePattern('transaction.health')

@@ -1655,21 +1655,52 @@ export class ApiGatewayController {
     }
   }
 
-  @Get('transactions/balance/:accountId')
+  @Get('transactions/balance/:accountNumber')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getBalance(
-    @Param('accountId') accountId: string,
     @CurrentUser() currentUser: any,
+    @Param('accountNumber') accountNumber: string,
     @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
+
     const lang = langHeader || 'fr';
+
     return this.sendTransactionMessage(
       'transaction.getBalance',
-      { accountId, lang },
+      {
+        accountNumber: accountNumber,
+        userId: currentUser.id,
+        lang,
+      },
       'Failed to get balance',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Get('transactions/account/id/:accountId')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getAccountById(
+    @CurrentUser() currentUser: any,
+    @Param('accountId') accountId: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendTransactionMessage(
+      'transaction.getAccountById',
+      {
+        accountId: accountId,
+        userId: currentUser.id,
+        lang,
+      },
+      'Failed to get account',
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
   }
@@ -1985,7 +2016,7 @@ export class ApiGatewayController {
       HttpStatus.BAD_REQUEST,
     );
   }
-  
+
   @Get('beneficiaries')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async listBeneficiaries(
