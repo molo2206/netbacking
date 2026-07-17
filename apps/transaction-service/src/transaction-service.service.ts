@@ -1195,37 +1195,52 @@ export class TransactionServiceService {
     const limit = params?.limit || 10;
     const skip = (page - 1) * limit;
 
-    const [transfers, total] = await Promise.all([
-      this.prisma.transfer.findMany({
-        where: { initiatedBy: userId },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          senderAccount: {
-            include: {
-              clients: true,
+    try {
+      const [transfers, total] = await Promise.all([
+        this.prisma.transfer.findMany({
+          where: { initiatedBy: userId },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+          include: {
+            senderAccount: {
+              include: {
+                clients: true,
+              },
             },
-          },
-          receiverAccount: {
-            include: {
-              clients: true,
+            receiverAccount: {
+              include: {
+                clients: true,
+              },
             },
+            senderUser: true,
+            transaction: true,
           },
-          senderUser: true,
-          transaction: true,
-        },
-      }),
-      this.prisma.transfer.count({ where: { initiatedBy: userId } }),
-    ]);
+        }),
+        this.prisma.transfer.count({ where: { initiatedBy: userId } }),
+      ]);
 
-    return {
-      data: transfers,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      return {
+        success: true,
+        message: this.i18nService.translate('transfers_list_success', lang),
+        data: {
+          data: transfers,
+          total: total,
+          page: page,
+          limit: limit,
+          totalPages: Math.ceil(total / limit),
+          hasNextPage: page * limit < total,
+          hasPreviousPage: page > 1,
+        },
+      };
+    } catch (error) {
+      console.error('[Get Transfers By User] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('transfers_list_failed', lang),
+        statusCode: 500,
+      });
+    }
   }
 
   // ========================= STATISTIQUES =========================

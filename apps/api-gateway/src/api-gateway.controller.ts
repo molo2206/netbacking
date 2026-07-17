@@ -1708,9 +1708,15 @@ export class ApiGatewayController {
     const lang = langHeader || 'fr';
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
+
     return this.sendTransactionMessage(
       'transaction.getTransfersByUser',
-      { userId: currentUser.id, page: pageNum, limit: limitNum, lang },
+      {
+        userId: currentUser.id,
+        page: pageNum,
+        limit: limitNum,
+        lang
+      },
       'Failed to get transfers',
       HttpStatus.INTERNAL_SERVER_ERROR,
     );

@@ -248,13 +248,31 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
-      return await this.transactionService.getTransfersByUser(data.userId, {
-        page: data.page,
-        limit: data.limit,
-        lang: data.lang,
-      });
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.getTransfersByUser(
+        data.userId,
+        {
+          page: data.page || 1,
+          limit: data.limit || 10,
+          lang: data.lang || 'fr',
+        }
+      );
+
+      return {
+        success: true,
+        message: result.message || 'Liste des transferts récupérée avec succès',
+        data: result.data,
+      };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getTransfersByUser error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Failed to get transfers',
@@ -262,7 +280,6 @@ export class TransactionServiceController {
       });
     }
   }
-
   // ==================== STATISTIQUES ====================
 
   @MessagePattern('transaction.getStats')
