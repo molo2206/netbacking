@@ -1044,7 +1044,7 @@ export class TransactionServiceService {
   }
 
   // Dans TransactionServiceService
-  async getTransactionsByUser(userId: string, params?: {
+  async getTransactionsByUserId(userId: string, params?: {
     page?: number;
     limit?: number;
     type?: transactions_type;
@@ -1057,13 +1057,18 @@ export class TransactionServiceService {
     const skip = (page - 1) * limit;
 
     try {
+      console.log('[getTransactionsByUserId] userId:', userId);
+
       // 1. Récupérer l'utilisateur avec son clientId
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { clientId: true },
       });
 
+      console.log('[getTransactionsByUserId] user:', user);
+
       if (!user || !user.clientId) {
+        console.log('[getTransactionsByUserId] No clientId found for user');
         return {
           success: true,
           message: this.i18nService.translate('transactions_list_success', lang),
@@ -1085,9 +1090,12 @@ export class TransactionServiceService {
         select: { id: true },
       });
 
+      console.log('[getTransactionsByUserId] accounts:', accounts);
+
       const accountIds = accounts.map(a => a.id);
 
       if (accountIds.length === 0) {
+        console.log('[getTransactionsByUserId] No accounts found for client');
         return {
           success: true,
           message: this.i18nService.translate('transactions_list_success', lang),
@@ -1106,6 +1114,8 @@ export class TransactionServiceService {
       const where: any = { accountId: { in: accountIds } };
       if (params?.type) where.type = params.type;
       if (params?.status) where.status = params.status;
+
+      console.log('[getTransactionsByUserId] where:', where);
 
       const [transactions, total] = await Promise.all([
         this.prisma.transaction.findMany({
@@ -1138,6 +1148,8 @@ export class TransactionServiceService {
         this.prisma.transaction.count({ where }),
       ]);
 
+      console.log('[getTransactionsByUserId] transactions count:', transactions.length);
+
       return {
         success: true,
         message: this.i18nService.translate('transactions_list_success', lang),
@@ -1152,7 +1164,7 @@ export class TransactionServiceService {
         },
       };
     } catch (error) {
-      console.error('[Get Transactions By User] Error:', error);
+      console.error('[getTransactionsByUserId] Error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || this.i18nService.translate('transactions_list_failed', lang),

@@ -1573,42 +1573,49 @@ export class ApiGatewayController {
     @Query('status') status?: transactions_status,
     @Headers('lang') langHeader?: string,
   ) {
-    if (!currentUser || !currentUser.id) {
-      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
-    }
-    const lang = langHeader || 'fr';
-    const pageNum = page ? parseInt(page, 10) : 1;
-    const limitNum = limit ? parseInt(limit, 10) : 10;
+    try {
+      console.log('[API Gateway] getMyTransactions called');
+      console.log('[API Gateway] currentUser:', currentUser);
 
-    // ✅ Récupérer le clientId de l'utilisateur
-    const userResult = await this.sendUserMessage<any>(
-      'get_user',
-      { id: currentUser.id },
-      'User not found',
-      HttpStatus.NOT_FOUND
-    );
+      if (!currentUser || !currentUser.id) {
+        throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+      }
 
-    // ✅ Utiliser clientId
-    const clientId = userResult?.data?.clientId || userResult?.clientId;
+      const lang = langHeader || 'fr';
+      const pageNum = page ? parseInt(page, 10) : 1;
+      const limitNum = limit ? parseInt(limit, 10) : 10;
 
-    if (!clientId) {
-      throw new HttpException('Client not found for this user', HttpStatus.NOT_FOUND);
-    }
-
-    return this.sendTransactionMessage(
-      'transaction.getByClient',
-      {
-        clientId: clientId,
+      console.log('[API Gateway] Sending to transaction service:', {
+        userId: currentUser.id,
         page: pageNum,
         limit: limitNum,
-        type: type,
-        status: status,
+        type,
+        status,
         lang
-      },
-      'Failed to get transactions',
-      HttpStatus.INTERNAL_SERVER_ERROR,
-    );
+      });
+
+      const result = await this.sendTransactionMessage(
+        'transaction.getByUserId',
+        {
+          userId: currentUser.id,
+          page: pageNum,
+          limit: limitNum,
+          type: type,
+          status: status,
+          lang
+        },
+        'Failed to get transactions',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+
+      console.log('[API Gateway] Result from transaction service:', result);
+      return result;
+    } catch (error) {
+      console.error('[API Gateway] getMyTransactions error:', error);
+      throw error;
+    }
   }
+
   @Get('transactions/balance/:accountId')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getBalance(
