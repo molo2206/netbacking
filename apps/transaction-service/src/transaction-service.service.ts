@@ -203,12 +203,9 @@ export class TransactionServiceService {
     const shouldSaveBeneficiary = data.saveBeneficiary !== false;
 
     try {
-      // 1. Récupération du compte expéditeur
       const senderAccount = await this.prisma.account.findUnique({
         where: { id: data.senderAccountId },
-        include: {
-          clients: true,
-        },
+        include: { clients: true },
       });
 
       if (!senderAccount) {
@@ -227,12 +224,9 @@ export class TransactionServiceService {
         });
       }
 
-      // 2. Récupération du compte bénéficiaire
       const receiverAccount = await this.prisma.account.findUnique({
         where: { id: data.receiverAccountId },
-        include: {
-          clients: true,
-        },
+        include: { clients: true },
       });
 
       if (!receiverAccount) {
@@ -251,7 +245,6 @@ export class TransactionServiceService {
         });
       }
 
-      // 3. Vérification des devises
       const currency = data.currency || senderAccount.currency || 'XAF';
 
       if (senderAccount.currency !== receiverAccount.currency) {
@@ -262,7 +255,6 @@ export class TransactionServiceService {
         });
       }
 
-      // 4. Vérification du solde
       const senderBalance = senderAccount.balance?.toNumber() || 0;
       const fees = data.fees || 0;
       const totalAmount = data.amount + fees;
@@ -275,7 +267,6 @@ export class TransactionServiceService {
         });
       }
 
-      // 5. Préparation des informations du bénéficiaire
       const reference = this.generateTransferReference();
 
       let receiverName = data.receiverName || 'Unknown';
@@ -303,8 +294,8 @@ export class TransactionServiceService {
         }
       }
 
-      // 6. Création du transfert
-      const transfer = await this.prisma.transfer.create({
+      // ✅ Créer un transfert principal
+      const mainTransfer = await this.prisma.transfer.create({
         data: {
           id: crypto.randomUUID(),
           reference,
@@ -325,12 +316,16 @@ export class TransactionServiceService {
         },
       });
 
-      // 7. Mise à jour des soldes et création des transactions
       const newSenderBalance = senderBalance - totalAmount;
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
+      // ✅ Créer deux transferts avec des IDs différents
+      const debitTransferId = crypto.randomUUID();
+      const creditTransferId = crypto.randomUUID();
+
       await this.prisma.$transaction(async (prisma) => {
+        // Mettre à jour les comptes
         await prisma.account.update({
           where: { id: data.senderAccountId },
           data: {
@@ -347,11 +342,12 @@ export class TransactionServiceService {
           },
         });
 
+        // ✅ Transaction DEBIT avec son propre transferId
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.senderAccountId,
-            transferId: transfer.id,
+            transferId: debitTransferId, // ID unique pour le débit
             type: transactions_type.TRANSFER,
             amount: new Decimal(totalAmount),
             balanceBefore: new Decimal(senderBalance),
@@ -363,11 +359,12 @@ export class TransactionServiceService {
           },
         });
 
+        // ✅ Transaction CREDIT avec son propre transferId
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: data.receiverAccountId,
-            transferId: transfer.id,
+            transferId: creditTransferId, // ID unique pour le crédit
             type: transactions_type.TRANSFER,
             amount: new Decimal(data.amount),
             balanceBefore: new Decimal(receiverBalance),
@@ -379,8 +376,9 @@ export class TransactionServiceService {
           },
         });
 
+        // Mettre à jour le transfert principal
         await prisma.transfer.update({
-          where: { id: transfer.id },
+          where: { id: mainTransfer.id },
           data: {
             status: transfers_status.COMPLETED,
             completedAt: new Date(),
@@ -388,7 +386,7 @@ export class TransactionServiceService {
         });
       });
 
-      // 8. Enregistrement du bénéficiaire
+      // Enregistrement du bénéficiaire
       if (shouldSaveBeneficiary && receiverAccountNumber && receiverName) {
         try {
           await this.saveBeneficiary(
@@ -405,7 +403,6 @@ export class TransactionServiceService {
         }
       }
 
-      // 9. Audit log
       await this.logAudit(
         data.initiatedBy,
         'TRANSFER',
@@ -419,22 +416,17 @@ export class TransactionServiceService {
           beneficiarySaved: shouldSaveBeneficiary,
         },
         'TRANSFER',
-        transfer.id,
+        mainTransfer.id,
       );
 
-      // 10. Récupération du transfert complété
       const completedTransfer = await this.prisma.transfer.findUnique({
-        where: { id: transfer.id },
+        where: { id: mainTransfer.id },
         include: {
           senderAccount: {
-            include: {
-              clients: true,
-            },
+            include: { clients: true },
           },
           receiverAccount: {
-            include: {
-              clients: true,
-            },
+            include: { clients: true },
           },
           senderUser: true,
           transaction: true,
@@ -449,7 +441,6 @@ export class TransactionServiceService {
         });
       }
 
-      // 11. Notifications
       try {
         const senderLang = await this.getUserLanguage(data.initiatedBy);
 
@@ -468,7 +459,7 @@ export class TransactionServiceService {
             currency: currency,
           },
           'TRANSFER',
-          transfer.id,
+          mainTransfer.id,
           senderLang,
         );
 
@@ -488,7 +479,7 @@ export class TransactionServiceService {
                 currency: currency,
               },
               'TRANSFER',
-              transfer.id,
+              mainTransfer.id,
               receiverLang,
             );
           }
@@ -497,7 +488,6 @@ export class TransactionServiceService {
         console.error('[Notifications] Transfer notification error:', notifError);
       }
 
-      // 12. Retour
       return {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
@@ -529,7 +519,6 @@ export class TransactionServiceService {
       });
     }
   }
-
   // ========================= DÉPÔT =========================
   async deposit(data: {
     accountId: string;
