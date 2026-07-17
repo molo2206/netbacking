@@ -472,6 +472,7 @@ export class AuthServiceService {
           clientId: user.clientId,
           sessions: formattedSessions,
           platform: user.platform || null,
+          pinStatus: user.pinStatus,
           accounts: accounts.map(account => ({
             id: account.id,
             clientId: account.clientId,
@@ -543,6 +544,7 @@ export class AuthServiceService {
           updatedAt: true,
           deletedAt: true,
           clientId: true,
+          pinStatus: true,
         },
       });
 
@@ -792,6 +794,12 @@ export class AuthServiceService {
           clientId: user.clientId,
           sessions: formattedSessions,
           platform: user.platform || null,
+          isEmailVerified: user.isEmailVerified,
+          isPhoneVerified: user.isPhoneVerified,
+          isTwoFactorEnabled: user.isTwoFactorEnabled,
+          twoFactorSecret: user.twoFactorSecret,
+          lastLoginAt: user.lastLoginAt,
+          pinStatus: user.pinStatus,
           accounts: accounts.map(account => ({
             id: account.id,
             clientId: account.clientId,
