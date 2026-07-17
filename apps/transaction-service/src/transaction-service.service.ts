@@ -146,11 +146,11 @@ export class TransactionServiceService {
 
   private verifyPin(plainPin: string, hashedPin: string): boolean {
     try {
-      // Hasher le PIN entré avec SHA-1
-      const hash = crypto.createHash('sha1').update(plainPin).digest('hex');
+      // Hasher le PIN entré avec SHA-256 (comme dans user-service)
+      const hash = crypto.createHash('sha256').update(plainPin).digest('hex');
 
-      // Comparer avec le hash stocké (en ignorant la casse)
-      return hash === hashedPin || hash === hashedPin.toLowerCase();
+      // Comparer avec le hash stocké
+      return hash === hashedPin;
     } catch (error) {
       console.error('[Verify PIN] Error:', error);
       return false;
