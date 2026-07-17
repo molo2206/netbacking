@@ -773,103 +773,115 @@ export class TransactionServiceService {
     const limit = params?.limit || 50;
     const skip = (page - 1) * limit;
 
-    const where: any = { accountId };
+    try {
+      const where: any = { accountId };
 
-    if (params?.startDate) {
-      where.createdAt = { ...where.createdAt, gte: params.startDate };
-    }
-    if (params?.endDate) {
-      where.createdAt = { ...where.createdAt, lte: params.endDate };
-    }
-    if (params?.type) {
-      where.type = params.type;
-    }
-    if (params?.status) {
-      where.status = params.status;
-    }
+      if (params?.startDate) {
+        where.createdAt = { ...where.createdAt, gte: params.startDate };
+      }
+      if (params?.endDate) {
+        where.createdAt = { ...where.createdAt, lte: params.endDate };
+      }
+      if (params?.type) {
+        where.type = params.type;
+      }
+      if (params?.status) {
+        where.status = params.status;
+      }
 
-    const [account, transactions, total] = await Promise.all([
-      this.prisma.account.findUnique({
-        where: { id: accountId },
-        include: { clients: true },
-      }),
-      this.prisma.transaction.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          account: {
-            include: {
-              clients: true,
+      const [account, transactions, total] = await Promise.all([
+        this.prisma.account.findUnique({
+          where: { id: accountId },
+          include: { clients: true },
+        }),
+        this.prisma.transaction.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+          include: {
+            account: {
+              include: {
+                clients: true,
+              },
+            },
+            transfer: {
+              include: {
+                senderAccount: {
+                  include: {
+                    clients: true,
+                  },
+                },
+                receiverAccount: {
+                  include: {
+                    clients: true,
+                  },
+                },
+              },
             },
           },
-          transfer: {
-            include: {
-              senderAccount: {
-                include: {
-                  clients: true,
-                },
-              },
-              receiverAccount: {
-                include: {
-                  clients: true,
-                },
-              },
-            },
+        }),
+        this.prisma.transaction.count({ where }),
+      ]);
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('statement_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      const totalDebit = transactions
+        .filter(t => t.type === transactions_type.WITHDRAWAL || t.type === transactions_type.TRANSFER)
+        .reduce((sum, t) => sum + t.amount.toNumber(), 0);
+
+      const totalCredit = transactions
+        .filter(t => t.type === transactions_type.DEPOSIT)
+        .reduce((sum, t) => sum + t.amount.toNumber(), 0);
+
+      const clientName = account.clients
+        ? `${account.clients.firstName || ''} ${account.clients.lastName || ''}`.trim()
+        : 'Unknown';
+
+      return {
+        success: true,
+        message: this.i18nService.translate('statement_success', lang),
+        data: {
+          account: {
+            id: account.id,
+            clientId: account.clientId,
+            clientName: clientName,
+            balance: account.balance?.toNumber() || 0,
+            currency: account.currency,
+          },
+          statement: transactions, // ✅ Directement le tableau sans "data"
+          total: total,
+          page: page,
+          limit: limit,
+          totalPages: Math.ceil(total / limit),
+          hasNextPage: page * limit < total,
+          hasPreviousPage: page > 1,
+          summary: {
+            totalTransactions: total,
+            totalDebit: totalDebit,
+            totalCredit: totalCredit,
+            netChange: totalCredit - totalDebit,
+            startDate: params?.startDate || null,
+            endDate: params?.endDate || null,
           },
         },
-      }),
-      this.prisma.transaction.count({ where }),
-    ]);
-
-    if (!account) {
+      };
+    } catch (error) {
+      console.error('[Get Account Statement] Error:', error);
+      if (error instanceof RpcException) throw error;
       throw new RpcException({
         status: 'error',
-        message: this.i18nService.translate('statement_not_found', lang),
-        statusCode: 404,
+        message: error.message || this.i18nService.translate('statement_failed', lang),
+        statusCode: 500,
       });
     }
-
-    const totalDebit = transactions
-      .filter(t => t.type === transactions_type.WITHDRAWAL || t.type === transactions_type.TRANSFER)
-      .reduce((sum, t) => sum + t.amount.toNumber(), 0);
-
-    const totalCredit = transactions
-      .filter(t => t.type === transactions_type.DEPOSIT)
-      .reduce((sum, t) => sum + t.amount.toNumber(), 0);
-
-    // ✅ Utiliser firstName et lastName
-    const clientName = account.clients
-      ? `${account.clients.firstName || ''} ${account.clients.lastName || ''}`.trim()
-      : 'Unknown';
-
-    return {
-      account: {
-        id: account.id,
-        clientId: account.clientId,
-        clientName: clientName,
-        balance: account.balance?.toNumber() || 0,
-        currency: account.currency,
-      },
-      statement: {
-        transactions,
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        summary: {
-          totalTransactions: total,
-          totalDebit,
-          totalCredit,
-          netChange: totalCredit - totalDebit,
-          startDate: params?.startDate || null,
-          endDate: params?.endDate || null,
-        },
-      },
-    };
   }
-
 
   // ========================= RÉCUPÉRATION DES TRANSACTIONS =========================
   async getTransactionById(id: string, lang: string = 'fr') {

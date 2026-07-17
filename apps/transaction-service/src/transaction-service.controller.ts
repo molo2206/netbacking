@@ -109,20 +109,38 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
+      if (!data.accountId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account ID is required',
+          statusCode: 400,
+        });
+      }
+
       const startDate = data.startDate ? new Date(data.startDate) : undefined;
       const endDate = data.endDate ? new Date(data.endDate) : undefined;
 
-      return await this.transactionService.getAccountStatement(data.accountId, {
-        startDate,
-        endDate,
-        page: data.page,
-        limit: data.limit,
-        type: data.type,
-        status: data.status,
-        lang: data.lang,
-      });
+      const result = await this.transactionService.getAccountStatement(
+        data.accountId,
+        {
+          startDate,
+          endDate,
+          page: data.page || 1,
+          limit: data.limit || 50,
+          type: data.type,
+          status: data.status,
+          lang: data.lang || 'fr',
+        }
+      );
+
+      return {
+        success: true,
+        message: result.message || 'Relevé de compte récupéré avec succès',
+        data: result.data,
+      };
     } catch (error) {
       if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getAccountStatement error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Failed to get statement',
@@ -130,7 +148,6 @@ export class TransactionServiceController {
       });
     }
   }
-
   // ==================== TRANSACTIONS ====================
 
   @MessagePattern('transaction.getById')
