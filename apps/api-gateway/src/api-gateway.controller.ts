@@ -36,7 +36,7 @@ import { UpdateResourceDto } from 'apps/user-service/resources/dto/update-resour
 import { AssignMultipleResourcesDto } from 'apps/user-service/dto/assign-resource.dto';
 import { firstValueFrom, catchError, timeout } from 'rxjs';
 import { TransferDto } from 'apps/transaction-service/dto/create-transaction.dto';
-import { transactions_status, transactions_type } from '@prisma/client';
+import { transactions_status, transactions_type, transfers_platform, transfers_type } from '@prisma/client';
 
 @Controller()
 export class ApiGatewayController {
@@ -1498,7 +1498,19 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async transfer(
     @CurrentUser() currentUser: any,
-    @Body() body: TransferDto,
+    @Body() body: {
+      senderAccountNumber: string;
+      receiverAccountNumber: string;
+      receiverName?: string;
+      receiverPhone?: string;
+      receiverEmail?: string;
+      amount: number;
+      fees?: number;
+      description?: string;
+      currency?: string;
+      type?: transfers_type;
+      platform?: transfers_platform;
+    },
     @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
@@ -1506,12 +1518,20 @@ export class ApiGatewayController {
     }
     const lang = langHeader || 'fr';
 
-    // ✅ Utiliser sendTransactionMessage
     return this.sendTransactionMessage(
       'transaction.transfer',
       {
-        ...body,
+        senderAccountNumber: body.senderAccountNumber,
+        receiverAccountNumber: body.receiverAccountNumber,
+        receiverName: body.receiverName,
+        receiverPhone: body.receiverPhone,
+        receiverEmail: body.receiverEmail,
+        amount: body.amount,
         fees: body.fees || 0,
+        description: body.description,
+        currency: body.currency,
+        type: body.type,
+        platform: body.platform,
         initiatedBy: currentUser.id,
         lang,
       },
@@ -1519,7 +1539,6 @@ export class ApiGatewayController {
       HttpStatus.BAD_REQUEST,
     );
   }
-
 
   @Get('transactions/:id')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
@@ -1540,11 +1559,11 @@ export class ApiGatewayController {
     );
   }
 
-  @Get('transactions/account/:accountId')
+  @Get('transactions/account/:accountNumber')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getTransactionsByAccount(
     @CurrentUser() currentUser: any,
-    @Param('accountId') accountId: string,
+    @Param('accountNumber') accountNumber: string,  // ✅ Changé de accountId à accountNumber
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('type') type?: transactions_type,
@@ -1562,7 +1581,7 @@ export class ApiGatewayController {
     return this.sendTransactionMessage(
       'transaction.getByAccount',
       {
-        accountId,
+        accountNumber: accountNumber,  // ✅ Passer accountNumber
         page: pageNum,
         limit: limitNum,
         type: type,
@@ -1646,11 +1665,11 @@ export class ApiGatewayController {
     );
   }
 
-  @Get('transactions/statement/:accountId')
+  @Get('transactions/statement/:accountNumber')  // ✅ Changé de accountId à accountNumber
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getStatement(
     @CurrentUser() currentUser: any,
-    @Param('accountId') accountId: string,
+    @Param('accountNumber') accountNumber: string,  // ✅ Changé de accountId à accountNumber
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('page') page?: string,
@@ -1670,7 +1689,7 @@ export class ApiGatewayController {
     return this.sendTransactionMessage(
       'transaction.getStatement',
       {
-        accountId,
+        accountNumber: accountNumber,  // ✅ Passer accountNumber
         startDate,
         endDate,
         page: pageNum,

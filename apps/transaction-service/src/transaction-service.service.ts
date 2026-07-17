@@ -183,9 +183,11 @@ export class TransactionServiceService {
   }
 
   // ========================= TRANSFERT =========================
+  // apps/transaction-service/src/transaction-service.service.ts
+
   async transfer(data: {
-    senderAccountId: string;
-    receiverAccountId: string;
+    senderAccountNumber: string;
+    receiverAccountNumber: string;
     receiverName?: string;
     receiverPhone?: string;
     receiverEmail?: string;
@@ -203,8 +205,9 @@ export class TransactionServiceService {
     const shouldSaveBeneficiary = data.saveBeneficiary !== false;
 
     try {
+      // 1. Récupérer le compte expéditeur par accountNumber
       const senderAccount = await this.prisma.account.findUnique({
-        where: { id: data.senderAccountId },
+        where: { accountNumber: data.senderAccountNumber },
         include: { clients: true },
       });
 
@@ -224,8 +227,9 @@ export class TransactionServiceService {
         });
       }
 
+      // 2. Récupérer le compte bénéficiaire par accountNumber
       const receiverAccount = await this.prisma.account.findUnique({
-        where: { id: data.receiverAccountId },
+        where: { accountNumber: data.receiverAccountNumber },
         include: { clients: true },
       });
 
@@ -294,13 +298,13 @@ export class TransactionServiceService {
         }
       }
 
-      // 1. Créer le transfert
+      // 3. Créer le transfert
       const transfer = await this.prisma.transfer.create({
         data: {
           id: crypto.randomUUID(),
           reference,
-          senderAccountId: data.senderAccountId,
-          receiverAccountId: data.receiverAccountId,
+          senderAccountId: senderAccount.id,
+          receiverAccountId: receiverAccount.id,
           receiverName: receiverName,
           receiverPhone: receiverPhone,
           receiverEmail: receiverEmail,
@@ -320,32 +324,29 @@ export class TransactionServiceService {
       const receiverBalance = receiverAccount.balance?.toNumber() || 0;
       const newReceiverBalance = receiverBalance + data.amount;
 
-      // 2. Mettre à jour les comptes et créer les transactions avec le même transferId
+      // 4. Mettre à jour les comptes et créer les transactions
       await this.prisma.$transaction(async (prisma) => {
-        // Mettre à jour le compte expéditeur
         await prisma.account.update({
-          where: { id: data.senderAccountId },
+          where: { id: senderAccount.id },
           data: {
             balance: new Decimal(newSenderBalance),
             updatedAt: new Date(),
           },
         });
 
-        // Mettre à jour le compte bénéficiaire
         await prisma.account.update({
-          where: { id: data.receiverAccountId },
+          where: { id: receiverAccount.id },
           data: {
             balance: new Decimal(newReceiverBalance),
             updatedAt: new Date(),
           },
         });
 
-        // ✅ Transaction DEBIT avec le transfer.id
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
-            accountId: data.senderAccountId,
-            transferId: transfer.id, // Utiliser l'ID du transfert créé
+            accountId: senderAccount.id,
+            transferId: transfer.id,
             type: transactions_type.TRANSFER,
             amount: new Decimal(totalAmount),
             balanceBefore: new Decimal(senderBalance),
@@ -357,12 +358,11 @@ export class TransactionServiceService {
           },
         });
 
-        // ✅ Transaction CREDIT avec le transfer.id
         await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
-            accountId: data.receiverAccountId,
-            transferId: transfer.id, // Utiliser le même ID
+            accountId: receiverAccount.id,
+            transferId: transfer.id,
             type: transactions_type.TRANSFER,
             amount: new Decimal(data.amount),
             balanceBefore: new Decimal(receiverBalance),
@@ -374,7 +374,6 @@ export class TransactionServiceService {
           },
         });
 
-        // Mettre à jour le statut du transfert
         await prisma.transfer.update({
           where: { id: transfer.id },
           data: {
@@ -384,7 +383,7 @@ export class TransactionServiceService {
         });
       });
 
-      // Enregistrement du bénéficiaire
+      // 5. Enregistrement du bénéficiaire
       if (shouldSaveBeneficiary && receiverAccountNumber && receiverName) {
         try {
           await this.saveBeneficiary(
@@ -401,13 +400,13 @@ export class TransactionServiceService {
         }
       }
 
-      // Audit log
+      // 6. Audit log
       await this.logAudit(
         data.initiatedBy,
         'TRANSFER',
         {
-          from: data.senderAccountId,
-          to: data.receiverAccountId,
+          from: data.senderAccountNumber,
+          to: data.receiverAccountNumber,
           amount: data.amount,
           fees: fees,
           reference,
@@ -418,7 +417,7 @@ export class TransactionServiceService {
         transfer.id,
       );
 
-      // Récupérer le transfert complété
+      // 7. Récupérer le transfert complété
       const completedTransfer = await this.prisma.transfer.findUnique({
         where: { id: transfer.id },
         include: {
@@ -441,7 +440,7 @@ export class TransactionServiceService {
         });
       }
 
-      // Notifications
+      // 8. Notifications
       try {
         const senderLang = await this.getUserLanguage(data.initiatedBy);
 
@@ -489,6 +488,7 @@ export class TransactionServiceService {
         console.error('[Notifications] Transfer notification error:', notifError);
       }
 
+      // 9. Retour
       return {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
@@ -497,6 +497,8 @@ export class TransactionServiceService {
           reference: completedTransfer.reference,
           senderAccountId: completedTransfer.senderAccountId,
           receiverAccountId: completedTransfer.receiverAccountId,
+          senderAccountNumber: senderAccount.accountNumber,
+          receiverAccountNumber: receiverAccount.accountNumber,
           receiverName: completedTransfer.receiverName,
           amount: completedTransfer.amount,
           fees: completedTransfer.fees,
@@ -759,7 +761,7 @@ export class TransactionServiceService {
   }
 
   // ========================= RELEVÉ DE COMPTE (STATEMENT) =========================
-  async getAccountStatement(accountId: string, params?: {
+  async getAccountStatement(accountNumber: string, params?: {
     startDate?: Date;
     endDate?: Date;
     page?: number;
@@ -774,7 +776,22 @@ export class TransactionServiceService {
     const skip = (page - 1) * limit;
 
     try {
-      const where: any = { accountId };
+      // 1. Récupérer le compte par son accountNumber
+      const account = await this.prisma.account.findUnique({
+        where: { accountNumber: accountNumber },
+        include: { clients: true },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // 2. Récupérer les transactions du compte
+      const where: any = { accountId: account.id };
 
       if (params?.startDate) {
         where.createdAt = { ...where.createdAt, gte: params.startDate };
@@ -789,11 +806,7 @@ export class TransactionServiceService {
         where.status = params.status;
       }
 
-      const [account, transactions, total] = await Promise.all([
-        this.prisma.account.findUnique({
-          where: { id: accountId },
-          include: { clients: true },
-        }),
+      const [transactions, total] = await Promise.all([
         this.prisma.transaction.findMany({
           where,
           orderBy: { createdAt: 'desc' },
@@ -824,14 +837,6 @@ export class TransactionServiceService {
         this.prisma.transaction.count({ where }),
       ]);
 
-      if (!account) {
-        throw new RpcException({
-          status: 'error',
-          message: this.i18nService.translate('statement_not_found', lang),
-          statusCode: 404,
-        });
-      }
-
       const totalDebit = transactions
         .filter(t => t.type === transactions_type.WITHDRAWAL || t.type === transactions_type.TRANSFER)
         .reduce((sum, t) => sum + t.amount.toNumber(), 0);
@@ -850,12 +855,13 @@ export class TransactionServiceService {
         data: {
           account: {
             id: account.id,
+            accountNumber: account.accountNumber,
             clientId: account.clientId,
             clientName: clientName,
             balance: account.balance?.toNumber() || 0,
             currency: account.currency,
           },
-          statement: transactions, // ✅ Directement le tableau sans "data"
+          statement: transactions,
           total: total,
           page: page,
           limit: limit,
@@ -1000,7 +1006,7 @@ export class TransactionServiceService {
     };
   }
 
-  async getTransactionsByAccount(accountId: string, params?: {
+  async getTransactionsByAccount(accountNumber: string, params?: {
     page?: number;
     limit?: number;
     type?: transactions_type;
@@ -1013,7 +1019,22 @@ export class TransactionServiceService {
     const skip = (page - 1) * limit;
 
     try {
-      const where: any = { accountId };
+      // 1. Récupérer le compte par son accountNumber
+      const account = await this.prisma.account.findUnique({
+        where: { accountNumber: accountNumber },
+        select: { id: true },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // 2. Récupérer les transactions du compte
+      const where: any = { accountId: account.id };
       if (params?.type) where.type = params.type;
       if (params?.status) where.status = params.status;
 
@@ -1063,6 +1084,7 @@ export class TransactionServiceService {
       };
     } catch (error) {
       console.error('[Get Transactions By Account] Error:', error);
+      if (error instanceof RpcException) throw error;
       throw new RpcException({
         status: 'error',
         message: error.message || this.i18nService.translate('transactions_list_failed', lang),
@@ -1070,7 +1092,6 @@ export class TransactionServiceService {
       });
     }
   }
-
   // Dans TransactionServiceService
   async getTransactionsByUserId(userId: string, params?: {
     page?: number;

@@ -10,18 +10,30 @@ import {
   DepositDto,
   WithdrawDto,
 } from '../dto/create-transaction.dto';
-import { transactions_status, transactions_type } from '@prisma/client';
+import { transactions_status, transactions_type, transfers_platform, transfers_type } from '@prisma/client';
 
 @Controller()
 export class TransactionServiceController {
   constructor(private readonly transactionService: TransactionServiceService) { }
 
   // ==================== TRANSFERT ====================
-
   @MessagePattern('transaction.transfer')
-  async transfer(@Payload() data: TransferDto & { lang?: string }) {
+  async transfer(@Payload() data: {
+    senderAccountNumber: string;
+    receiverAccountNumber: string;
+    receiverName?: string;
+    receiverPhone?: string;
+    receiverEmail?: string;
+    amount: number;
+    fees?: number;
+    description?: string;
+    currency?: string;
+    type?: transfers_type;
+    platform?: transfers_platform;
+    initiatedBy: string;
+    lang?: string;
+  }) {
     try {
-      // ✅ S'assurer que initiatedBy est présent
       if (!data.initiatedBy) {
         throw new RpcException({
           status: 'error',
@@ -30,10 +42,9 @@ export class TransactionServiceController {
         });
       }
 
-      // Appeler le service
       const result = await this.transactionService.transfer({
-        senderAccountId: data.senderAccountId,
-        receiverAccountId: data.receiverAccountId,
+        senderAccountNumber: data.senderAccountNumber,
+        receiverAccountNumber: data.receiverAccountNumber,
         receiverName: data.receiverName,
         receiverPhone: data.receiverPhone,
         receiverEmail: data.receiverEmail,
@@ -43,7 +54,7 @@ export class TransactionServiceController {
         currency: data.currency,
         type: data.type,
         platform: data.platform,
-        initiatedBy: data.initiatedBy, // ✅ Maintenant défini
+        initiatedBy: data.initiatedBy,
         lang: data.lang || 'fr',
       });
 
@@ -62,7 +73,6 @@ export class TransactionServiceController {
       });
     }
   }
-
   // ==================== DÉPÔT ====================
 
   @MessagePattern('transaction.deposit')
@@ -95,11 +105,9 @@ export class TransactionServiceController {
     }
   }
 
-  // ==================== RELEVÉ DE COMPTE ====================
-
-  @MessagePattern('transaction.getStatement')
+  // ==================== RELEVÉ DE COMPTE ====================@MessagePattern('transaction.getStatement')
   async getAccountStatement(@Payload() data: {
-    accountId: string;
+    accountNumber: string;  // ✅ Changé de accountId à accountNumber
     startDate?: string;
     endDate?: string;
     page?: number;
@@ -109,10 +117,10 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
-      if (!data.accountId) {
+      if (!data.accountNumber) {
         throw new RpcException({
           status: 'error',
-          message: 'Account ID is required',
+          message: 'Account number is required',
           statusCode: 400,
         });
       }
@@ -121,7 +129,7 @@ export class TransactionServiceController {
       const endDate = data.endDate ? new Date(data.endDate) : undefined;
 
       const result = await this.transactionService.getAccountStatement(
-        data.accountId,
+        data.accountNumber,  // ✅ Passer accountNumber
         {
           startDate,
           endDate,
@@ -166,7 +174,7 @@ export class TransactionServiceController {
 
   @MessagePattern('transaction.getByAccount')
   async getTransactionsByAccount(@Payload() data: {
-    accountId: string;
+    accountNumber: string;  // ✅ Changé de accountId à accountNumber
     page?: number;
     limit?: number;
     type?: transactions_type;
@@ -174,16 +182,16 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
-      if (!data.accountId) {
+      if (!data.accountNumber) {
         throw new RpcException({
           status: 'error',
-          message: 'Account ID is required',
+          message: 'Account number is required',
           statusCode: 400,
         });
       }
 
       const result = await this.transactionService.getTransactionsByAccount(
-        data.accountId,
+        data.accountNumber,  // ✅ Passer accountNumber
         {
           page: data.page || 1,
           limit: data.limit || 10,

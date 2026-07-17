@@ -42,11 +42,11 @@ export class CreateTransactionDto {
 export class TransferDto {
   @IsNotEmpty()
   @IsString()
-  senderAccountId: string;
+  senderAccountNumber: string;  // ✅ Changé de senderAccountId à senderAccountNumber
 
   @IsNotEmpty()
   @IsString()
-  receiverAccountId: string;
+  receiverAccountNumber: string; // ✅ Changé de receiverAccountId à receiverAccountNumber
 
   @IsOptional()
   @IsString()
