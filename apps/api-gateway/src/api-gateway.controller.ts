@@ -1888,6 +1888,104 @@ export class ApiGatewayController {
     );
   }
 
+  @Post('beneficiaries')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async createBeneficiary(
+    @CurrentUser() currentUser: any,
+    @Body() body: {
+      accountNumber: string;
+      accountName: string;
+      bankName?: string;
+      phone?: string;
+      email?: string;
+      nickname?: string;
+      isFavorite?: boolean;
+    },
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendTransactionMessage(
+      'transaction.createBeneficiary',
+      {
+        userId: currentUser.id,
+        accountNumber: body.accountNumber,
+        accountName: body.accountName,
+        bankName: body.bankName,
+        phone: body.phone,
+        email: body.email,
+        nickname: body.nickname,
+        isFavorite: body.isFavorite || false,
+        lang,
+      },
+      'Failed to create beneficiary',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  @Patch('beneficiaries/:id')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async updateBeneficiary(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+    @Body() body: {
+      accountName?: string;
+      bankName?: string;
+      phone?: string;
+      email?: string;
+      nickname?: string;
+      isFavorite?: boolean;
+    },
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendTransactionMessage(
+      'transaction.updateBeneficiary',
+      {
+        id,
+        userId: currentUser.id,
+        ...body,
+        lang,
+      },
+      'Failed to update beneficiary',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  @Delete('beneficiaries/:id')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async deleteBeneficiary(
+    @Param('id') id: string,
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendTransactionMessage(
+      'transaction.deleteBeneficiary',
+      {
+        id,
+        userId: currentUser.id,
+        lang,
+      },
+      'Failed to delete beneficiary',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+  
   @Get('beneficiaries')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async listBeneficiaries(

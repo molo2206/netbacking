@@ -1642,6 +1642,332 @@ export class TransactionServiceService {
     }
   }
 
+  // apps/transaction-service/src/transaction-service.service.ts
+
+  // ========================= BÉNÉFICIAIRES =========================
+
+  // 1. CRÉER UN BÉNÉFICIAIRE
+  async createBeneficiary(data: {
+    userId: string;
+    accountNumber: string;
+    accountName: string;
+    bankName?: string;
+    phone?: string;
+    email?: string;
+    nickname?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // Vérifier si l'utilisateur existe
+      const user = await this.prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { id: true },
+      });
+
+      if (!user) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('user_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // Vérifier si le bénéficiaire existe déjà
+      const existingBeneficiary = await this.prisma.beneficiary.findUnique({
+        where: {
+          userId_accountNumber: {
+            userId: data.userId,
+            accountNumber: data.accountNumber,
+          },
+        },
+      });
+
+      if (existingBeneficiary) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_already_exists', lang),
+          statusCode: 409,
+        });
+      }
+
+      // Créer le bénéficiaire
+      const beneficiary = await this.prisma.beneficiary.create({
+        data: {
+          id: crypto.randomUUID(),
+          userId: data.userId,
+          accountNumber: data.accountNumber,
+          accountName: data.accountName,
+          bankName: data.bankName || null,
+          phone: data.phone || null,
+          email: data.email || null,
+          nickname: data.nickname || data.accountName,
+          isFavorite: data.isFavorite || false,
+        },
+      });
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiary_created', lang),
+        data: beneficiary,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Create Beneficiary] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiary_create_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 2. LISTER LES BÉNÉFICIAIRES
+  async listBeneficiaries(data: {
+    userId: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+    const page = data.page || 1;
+    const limit = data.limit || 10;
+    const skip = (page - 1) * limit;
+
+    try {
+      // Construire les filtres
+      const where: any = {
+        userId: data.userId,
+      };
+
+      // Filtre par recherche
+      if (data.search) {
+        where.OR = [
+          { accountName: { contains: data.search, mode: 'insensitive' } },
+          { accountNumber: { contains: data.search, mode: 'insensitive' } },
+          { bankName: { contains: data.search, mode: 'insensitive' } },
+          { nickname: { contains: data.search, mode: 'insensitive' } },
+          { phone: { contains: data.search, mode: 'insensitive' } },
+          { email: { contains: data.search, mode: 'insensitive' } },
+        ];
+      }
+
+      // Filtre par favoris
+      if (data.isFavorite !== undefined) {
+        where.isFavorite = data.isFavorite;
+      }
+
+      // Récupérer les bénéficiaires avec pagination
+      const [beneficiaries, total] = await this.prisma.$transaction([
+        this.prisma.beneficiary.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+        }),
+        this.prisma.beneficiary.count({ where }),
+      ]);
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiaries_list_success', lang),
+        data: {
+          data: beneficiaries,
+          total: total,
+          page: page,
+          limit: limit,
+          totalPages: Math.ceil(total / limit),
+          hasNextPage: page * limit < total,
+          hasPreviousPage: page > 1,
+        },
+      };
+    } catch (error) {
+      console.error('[List Beneficiaries] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiaries_list_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 4. METTRE À JOUR UN BÉNÉFICIAIRE
+  async updateBeneficiary(data: {
+    id: string;
+    userId: string;
+    accountName?: string;
+    bankName?: string;
+    phone?: string;
+    email?: string;
+    nickname?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // Vérifier que le bénéficiaire existe et appartient à l'utilisateur
+      const existing = await this.prisma.beneficiary.findUnique({
+        where: { id: data.id },
+      });
+
+      if (!existing) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (existing.userId !== data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      // Préparer les données de mise à jour
+      const updateData: any = {};
+      if (data.accountName !== undefined) updateData.accountName = data.accountName;
+      if (data.bankName !== undefined) updateData.bankName = data.bankName;
+      if (data.phone !== undefined) updateData.phone = data.phone;
+      if (data.email !== undefined) updateData.email = data.email;
+      if (data.nickname !== undefined) updateData.nickname = data.nickname;
+      if (data.isFavorite !== undefined) updateData.isFavorite = data.isFavorite;
+      updateData.updatedAt = new Date();
+
+      // Mettre à jour le bénéficiaire
+      const updated = await this.prisma.beneficiary.update({
+        where: { id: data.id },
+        data: updateData,
+      });
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiary_updated', lang),
+        data: updated,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiary_update_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 5. SUPPRIMER UN BÉNÉFICIAIRE
+  async deleteBeneficiary(data: {
+    id: string;
+    userId: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // Vérifier que le bénéficiaire existe et appartient à l'utilisateur
+      const existing = await this.prisma.beneficiary.findUnique({
+        where: { id: data.id },
+      });
+
+      if (!existing) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (existing.userId !== data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      // Supprimer le bénéficiaire
+      await this.prisma.beneficiary.delete({
+        where: { id: data.id },
+      });
+
+      return {
+        success: true,
+        message: this.i18nService.translate('beneficiary_deleted', lang),
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiary_delete_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 6. AJOUTER/SUPPRIMER DES FAVORIS
+  async toggleFavorite(data: {
+    id: string;
+    userId: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // Vérifier que le bénéficiaire existe et appartient à l'utilisateur
+      const existing = await this.prisma.beneficiary.findUnique({
+        where: { id: data.id },
+      });
+
+      if (!existing) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (existing.userId !== data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('beneficiary_access_denied', lang),
+          statusCode: 403,
+        });
+      }
+
+      // Basculer le statut favori
+      const updated = await this.prisma.beneficiary.update({
+        where: { id: data.id },
+        data: {
+          isFavorite: !existing.isFavorite,
+          updatedAt: new Date(),
+        },
+      });
+
+      return {
+        success: true,
+        message: this.i18nService.translate(
+          updated.isFavorite ? 'beneficiary_favorite_added' : 'beneficiary_favorite_removed',
+          lang
+        ),
+        data: updated,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('beneficiary_toggle_favorite_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
   // ========================= HEALTH CHECK =========================
   async healthCheck() {
     return { status: 'ok', service: 'transaction-service' };

@@ -465,6 +465,194 @@ export class TransactionServiceController {
     }
   }
 
+
+  // apps/transaction-service/src/transaction-service.controller.ts
+
+  // ==================== BÉNÉFICIAIRES ====================
+
+  // 1. CRÉER UN BÉNÉFICIAIRE
+  @MessagePattern('transaction.createBeneficiary')
+  async createBeneficiary(@Payload() data: {
+    userId: string;
+    accountNumber: string;
+    accountName: string;
+    bankName?: string;
+    phone?: string;
+    email?: string;
+    nickname?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    try {
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.accountNumber) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account number is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.accountName) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account name is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.createBeneficiary(data);
+      return {
+        success: true,
+        message: result.message || 'Bénéficiaire créé avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] createBeneficiary error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to create beneficiary',
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 4. METTRE À JOUR UN BÉNÉFICIAIRE
+  @MessagePattern('transaction.updateBeneficiary')
+  async updateBeneficiary(@Payload() data: {
+    id: string;
+    userId: string;
+    accountName?: string;
+    bankName?: string;
+    phone?: string;
+    email?: string;
+    nickname?: string;
+    isFavorite?: boolean;
+    lang?: string;
+  }) {
+    try {
+      if (!data.id) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Beneficiary ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.updateBeneficiary(data);
+      return {
+        success: true,
+        message: result.message || 'Bénéficiaire mis à jour avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] updateBeneficiary error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to update beneficiary',
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 5. SUPPRIMER UN BÉNÉFICIAIRE
+  @MessagePattern('transaction.deleteBeneficiary')
+  async deleteBeneficiary(@Payload() data: {
+    id: string;
+    userId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.id) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Beneficiary ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.deleteBeneficiary(data);
+      return {
+        success: true,
+        message: result.message || 'Bénéficiaire supprimé avec succès',
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] deleteBeneficiary error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to delete beneficiary',
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 6. AJOUTER/SUPPRIMER DES FAVORIS
+  @MessagePattern('transaction.toggleFavorite')
+  async toggleFavorite(@Payload() data: {
+    id: string;
+    userId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.id) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Beneficiary ID is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.userId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'User ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.transactionService.toggleFavorite(data);
+      return {
+        success: true,
+        message: result.message,
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] toggleFavorite error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to toggle favorite',
+        statusCode: 500,
+      });
+    }
+  }
+
   // ==================== HEALTH CHECK ====================
 
   @MessagePattern('transaction.health')
