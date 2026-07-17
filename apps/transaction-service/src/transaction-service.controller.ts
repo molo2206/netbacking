@@ -32,7 +32,8 @@ export class TransactionServiceController {
     platform?: transfers_platform;
     initiatedBy: string;
     lang?: string;
-    saveBeneficiary?: boolean;  // ✅ Ajout du champ
+    saveBeneficiary?: boolean;
+    pin: string;  // ✅ Ajout du PIN
   }) {
     try {
       if (!data.initiatedBy) {
@@ -40,6 +41,14 @@ export class TransactionServiceController {
           status: 'error',
           message: 'User not authenticated',
           statusCode: 401,
+        });
+      }
+
+      if (!data.pin) {
+        throw new RpcException({
+          status: 'error',
+          message: 'PIN is required',
+          statusCode: 400,
         });
       }
 
@@ -57,7 +66,8 @@ export class TransactionServiceController {
         platform: data.platform,
         initiatedBy: data.initiatedBy,
         lang: data.lang || 'fr',
-        saveBeneficiary: data.saveBeneficiary,  // ✅ Passage du champ
+        saveBeneficiary: data.saveBeneficiary,
+        pin: data.pin,  // ✅ Passage du PIN
       });
 
       return {

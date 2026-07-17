@@ -21,6 +21,7 @@ import { I18nService } from '../../../libs/common/src/i18n/i18n.service';
 import { NotificationHelper } from 'apps/notification-service/src/helpers/NotificationHelper';
 import { NotificationType } from 'apps/notification-service/src/type/notification-type';
 import { SmsService } from 'apps/auth-service/src/sms/sms.service';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class TransactionServiceService {
@@ -200,11 +201,86 @@ export class TransactionServiceService {
     initiatedBy: string;
     lang?: string;
     saveBeneficiary?: boolean;
+    pin: string;
   }) {
     const lang = data.lang || 'fr';
     const shouldSaveBeneficiary = data.saveBeneficiary !== false;
 
     try {
+      // 0. Vérification du PIN
+      const user = await this.prisma.user.findUnique({
+        where: { id: data.initiatedBy },
+        select: {
+          pin: true,
+          pinStatus: true,
+          failedPinAttempts: true,
+          pinLockedUntil: true,
+        },
+      });
+
+      if (!user) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('user_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (!user.pinStatus) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('pin_not_enabled', lang),
+          statusCode: 403,
+        });
+      }
+
+      if (user.pinLockedUntil && new Date() < user.pinLockedUntil) {
+        const remainingTime = Math.ceil((user.pinLockedUntil.getTime() - Date.now()) / 60000);
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('pin_locked', lang, { minutes: remainingTime }),
+          statusCode: 403,
+        });
+      }
+
+      // ✅ Vérification du PIN hashé avec bcrypt - Correction du type null
+      const isPinValid = user.pin ? await bcrypt.compare(data.pin, user.pin) : false;
+
+      if (!isPinValid) {
+        const newAttempts = (user.failedPinAttempts || 0) + 1;
+        // ✅ Correction du type pour pinLockedUntil
+        let pinLockedUntil: Date | null = null;
+
+        if (newAttempts >= 3) {
+          pinLockedUntil = new Date(Date.now() + 15 * 60000);
+        }
+
+        await this.prisma.user.update({
+          where: { id: data.initiatedBy },
+          data: {
+            failedPinAttempts: newAttempts,
+            pinLockedUntil: pinLockedUntil,
+          },
+        });
+
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('pin_invalid', lang, { attempts: newAttempts }),
+          statusCode: 403,
+        });
+      }
+
+      // Réinitialiser les tentatives échouées si le PIN est valide
+      if (user.failedPinAttempts && user.failedPinAttempts > 0) {
+        await this.prisma.user.update({
+          where: { id: data.initiatedBy },
+          data: {
+            failedPinAttempts: 0,
+            pinLockedUntil: null,
+          },
+        });
+      }
+
       // 1. Récupérer le compte expéditeur par accountNumber
       const senderAccount = await this.prisma.account.findUnique({
         where: { accountNumber: data.senderAccountNumber },

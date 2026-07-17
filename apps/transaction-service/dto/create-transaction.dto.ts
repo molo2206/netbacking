@@ -1,6 +1,6 @@
 // apps/transaction-service/src/dto/create-transaction.dto.ts
 
-import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min, IsBoolean } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsEnum, IsNotEmpty, Min, IsBoolean, Length } from 'class-validator';
 import { transactions_type, transactions_status, transfers_type, transfers_platform, transactions_movement } from '@prisma/client';
 
 export class CreateTransactionDto {
@@ -92,6 +92,11 @@ export class TransferDto {
   @IsOptional()
   @IsBoolean()
   saveBeneficiary?: boolean;  // ✅ Ajout du champ
+
+  @IsNotEmpty()
+  @IsString()
+  @Length(4, 4)  // ✅ PIN doit faire 4 caractères
+  pin: string;  // ✅ Ajout du PIN
 }
 
 export class DepositDto {

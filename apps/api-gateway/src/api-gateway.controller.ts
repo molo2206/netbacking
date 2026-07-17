@@ -1510,13 +1510,19 @@ export class ApiGatewayController {
       currency?: string;
       type?: transfers_type;
       platform?: transfers_platform;
-      saveBeneficiary?: boolean;  // ✅ Ajout du champ
+      saveBeneficiary?: boolean;
+      pin: string;  // ✅ Ajout du PIN
     },
     @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
+
+    if (!body.pin) {
+      throw new HttpException('PIN is required', HttpStatus.BAD_REQUEST);
+    }
+
     const lang = langHeader || 'fr';
 
     return this.sendTransactionMessage(
@@ -1535,7 +1541,8 @@ export class ApiGatewayController {
         platform: body.platform,
         initiatedBy: currentUser.id,
         lang,
-        saveBeneficiary: body.saveBeneficiary,  // ✅ Passage du champ
+        saveBeneficiary: body.saveBeneficiary,
+        pin: body.pin,  // ✅ Passage du PIN
       },
       'Transfer failed',
       HttpStatus.BAD_REQUEST,
