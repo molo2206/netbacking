@@ -1568,6 +1568,8 @@ export class ApiGatewayController {
     @CurrentUser() currentUser: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('type') type?: transactions_type,
+    @Query('status') status?: transactions_status,
     @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
@@ -1576,9 +1578,17 @@ export class ApiGatewayController {
     const lang = langHeader || 'fr';
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
+
     return this.sendTransactionMessage(
       'transaction.getByClient',
-      { clientId: currentUser.id, page: pageNum, limit: limitNum, lang },
+      {
+        clientId: currentUser.id,
+        page: pageNum,
+        limit: limitNum,
+        type: type,
+        status: status,
+        lang
+      },
       'Failed to get transactions',
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
