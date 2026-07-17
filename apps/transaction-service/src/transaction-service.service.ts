@@ -355,6 +355,7 @@ export class TransactionServiceService {
             description: `Transfer to ${receiverName}`,
             status: transactions_status.COMPLETED,
             movement: transactions_movement.DEBIT,
+            currency: senderAccount.currency
           },
         });
 
@@ -371,6 +372,7 @@ export class TransactionServiceService {
             description: `Transfer from ${senderAccount.clients?.firstName || 'Unknown'} ${senderAccount.clients?.lastName || ''}`.trim(),
             status: transactions_status.COMPLETED,
             movement: transactions_movement.CREDIT,
+            currency: senderAccount.currency
           },
         });
 

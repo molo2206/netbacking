@@ -162,6 +162,7 @@ model Transaction {
   reference     String                 @unique(map: "reference") @db.VarChar(255)
   description   String?                @db.Text
   createdAt     DateTime?              @default(now()) @db.DateTime(0)
+  currency      String?                @db.VarChar(11)
   transfer      Transfer               @relation(fields: [transferId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_1")
   account       Account                @relation(fields: [accountId], references: [id], onUpdate: Restrict, map: "transactions_ibfk_2")
 
