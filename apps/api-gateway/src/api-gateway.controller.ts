@@ -1562,6 +1562,7 @@ export class ApiGatewayController {
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
   }
+
   @Get('transactions/client/me')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getMyTransactions(
@@ -1580,15 +1581,15 @@ export class ApiGatewayController {
     const limitNum = limit ? parseInt(limit, 10) : 10;
 
     // ✅ Récupérer le clientId de l'utilisateur
-    const user = await this.sendUserMessage(
+    const userResult = await this.sendUserMessage<any>(
       'get_user',
       { id: currentUser.id },
       'User not found',
       HttpStatus.NOT_FOUND
     );
 
-    // ✅ Utiliser clientId au lieu de user.id
-    const clientId = user?.data?.clientId;
+    // ✅ Utiliser clientId
+    const clientId = userResult?.data?.clientId || userResult?.clientId;
 
     if (!clientId) {
       throw new HttpException('Client not found for this user', HttpStatus.NOT_FOUND);
@@ -1597,7 +1598,7 @@ export class ApiGatewayController {
     return this.sendTransactionMessage(
       'transaction.getByClient',
       {
-        clientId: clientId, // ✅ Utiliser le clientId
+        clientId: clientId,
         page: pageNum,
         limit: limitNum,
         type: type,
