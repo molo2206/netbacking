@@ -1048,28 +1048,40 @@ export class AuthServiceService {
           this.i18nService.translate('no_email', lang),
         );
     } else {
-      // ✅ Normaliser le téléphone comme dans resetPassword
+      // Normaliser le téléphone
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
-      identifierToStore = normalizedPhone;
 
+      // Rechercher l'utilisateur avec différents formats
       user = await this.prisma.user.findFirst({
-        where: { phone: normalizedPhone },
+        where: {
+          OR: [
+            { phone: normalizedPhone },
+            { phone: normalizedPhone.replace('+', '') },
+            { phone: '+' + normalizedPhone.replace('+', '') }
+          ]
+        },
       });
-      if (!user)
+
+      if (!user) {
         throw new BadRequestException(
           this.i18nService.translate('user_not_found', lang),
         );
-      if (!user.phone)
+      }
+      if (!user.phone) {
         throw new BadRequestException(
           this.i18nService.translate('no_phone', lang),
         );
+      }
+
+      // Utiliser le phone exact de l'utilisateur
+      identifierToStore = user.phone;
     }
 
-    // ✅ Invalider UNIQUEMENT les OTP de cet utilisateur pour cet identifiant
+    // Invalider les anciens OTP
     await this.prisma.otp.updateMany({
       where: {
         userId: user.id,
-        email: identifierToStore,  // ← Même logique que resetPassword
+        email: identifierToStore,
         isUsed: false,
         expiresAt: { gt: new Date() }
       },
@@ -1078,12 +1090,12 @@ export class AuthServiceService {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ Créer l'OTP avec le même format que resetPassword
+    // Créer l'OTP
     await this.prisma.otp.create({
       data: {
         id: crypto.randomUUID(),
         userId: user.id,
-        email: identifierToStore,  // ← Stocké comme dans resetPassword
+        email: identifierToStore,
         otpCode,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         isUsed: false,
