@@ -1155,100 +1155,82 @@ export class AuthServiceService {
     const { identifier, code, password, lang = 'fr' } = resetPasswordDto;
     const cleanIdentifier = identifier.trim();
 
+    console.log('🚀 START resetPassword');
+    console.log('📝 identifier:', cleanIdentifier);
+    console.log('📝 code:', code);
+
     if (!password || password.trim().length < 8) {
       throw new BadRequestException(
         this.i18nService.translate('password_too_short', lang),
       );
     }
 
-    const isEmail = cleanIdentifier.includes('@');
+    // ✅ 1. CHERCHER L'UTILISATEUR
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanIdentifier.toLowerCase() },
+          { phone: cleanIdentifier },
+          { phone: cleanIdentifier.replace('+', '') },
+          { phone: '+' + cleanIdentifier.replace('+', '') }
+        ]
+      },
+    });
 
-    // ✅ FONCTION DE NORMALISATION INTÉGRÉE
-    const normalizePhone = (phone: string): string => {
-      let cleaned = phone.trim();
-      cleaned = cleaned.replace(/[^0-9+]/g, '');
-      if (cleaned.startsWith('00')) {
-        cleaned = '+' + cleaned.substring(2);
-      }
-      if (cleaned.startsWith('0') && !cleaned.startsWith('+')) {
-        cleaned = '+243' + cleaned.substring(1);
-      }
-      if (!cleaned.startsWith('+')) {
-        cleaned = '+' + cleaned;
-      }
-      return cleaned;
-    };
-
-    let user: any;
-
-    if (isEmail) {
-      user = await this.prisma.user.findFirst({
-        where: { email: cleanIdentifier.toLowerCase() },
-      });
-    } else {
-      // Normaliser le téléphone
-      const normalizedPhone = normalizePhone(cleanIdentifier);
-
-      console.log('🔍 [resetPassword] cleanIdentifier:', cleanIdentifier);
-      console.log('🔍 [resetPassword] normalizedPhone:', normalizedPhone);
-
-      user = await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            { phone: normalizedPhone },
-            { phone: normalizedPhone.replace('+', '') },
-            { phone: '+' + normalizedPhone.replace('+', '') }
-          ]
-        },
-      });
+    console.log('🔍 User found?', !!user);
+    if (user) {
+      console.log('🔍 User ID:', user.id);
+      console.log('🔍 User phone:', user.phone);
     }
 
     if (!user) {
-      console.log('❌ Utilisateur non trouvé pour:', cleanIdentifier);
       throw new BadRequestException(
         this.i18nService.translate('user_not_found', lang),
       );
     }
 
-    console.log('✅ Utilisateur trouvé:', { id: user.id, phone: user.phone });
-
-    // ✅ RECHERCHER L'OTP
+    // ✅ 2. CHERCHER L'OTP
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
-        userId: user.id,
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
 
+    console.log('🔍 OTP found?', !!otpEntry);
+    if (otpEntry) {
+      console.log('🔍 OTP ID:', otpEntry.id);
+      console.log('🔍 OTP email:', otpEntry.email);
+      console.log('🔍 OTP userId:', otpEntry.userId);
+    }
+
     if (!otpEntry) {
-      console.log('❌ Aucun OTP trouvé pour l\'utilisateur:', user.id);
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
     }
 
-    console.log('✅ OTP trouvé:', { id: otpEntry.id, email: otpEntry.email });
-
-    // Vérifier que l'OTP correspond au téléphone
-    const phoneWithPlus = user.phone;
-    const phoneWithoutPlus = user.phone.replace('+', '');
-    const normalizedIdentifier = isEmail ? cleanIdentifier.toLowerCase() : normalizePhone(cleanIdentifier);
-
-    const isValid =
-      otpEntry.email === phoneWithPlus ||
-      otpEntry.email === phoneWithoutPlus ||
-      otpEntry.email === normalizedIdentifier ||
-      otpEntry.email === '+' + normalizedIdentifier.replace('+', '');
-
-    if (!isValid) {
-      console.log('❌ L\'email de l\'OTP ne correspond pas');
+    // ✅ 3. VÉRIFIER L'UTILISATEUR
+    if (otpEntry.userId !== user.id) {
+      console.log('❌ User ID mismatch:', { otpUserId: otpEntry.userId, userId: user.id });
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
     }
 
+    // ✅ 4. VÉRIFIER L'EMAIL
+    const userPhoneNormalized = user.phone.replace('+', '');
+    const otpEmailNormalized = otpEntry.email.replace('+', '');
+
+    if (userPhoneNormalized !== otpEmailNormalized) {
+      console.log('❌ Phone mismatch:', { userPhone: user.phone, otpEmail: otpEntry.email });
+      throw new BadRequestException(
+        this.i18nService.translate('otp_invalid', lang),
+      );
+    }
+
+    // ✅ 5. METTRE À JOUR
     const hashedPassword = await bcrypt.hash(password, 10);
     await this.prisma.user.update({
       where: { id: user.id },
