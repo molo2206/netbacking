@@ -1164,15 +1164,13 @@ export class AuthServiceService {
     const isEmail = cleanIdentifier.includes('@');
 
     let user: any;
-    let searchIdentifier: string;
 
     if (isEmail) {
-      searchIdentifier = cleanIdentifier.toLowerCase();
       user = await this.prisma.user.findFirst({
-        where: { email: searchIdentifier },
+        where: { email: cleanIdentifier.toLowerCase() },
       });
     } else {
-      // ✅ UTILISER LA MÊME LOGIQUE QUE sendResetPasswordOtp
+      // Normaliser le téléphone
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
 
       user = await this.prisma.user.findFirst({
@@ -1184,13 +1182,6 @@ export class AuthServiceService {
           ]
         },
       });
-
-      if (user) {
-        // ✅ Utiliser le téléphone exact de l'utilisateur (avec +)
-        searchIdentifier = user.phone;
-      } else {
-        searchIdentifier = normalizedPhone;
-      }
     }
 
     if (!user) {
@@ -1199,46 +1190,42 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP
-    let otpEntry = await this.prisma.otp.findFirst({
+    console.log('✅ Utilisateur trouvé:', { id: user.id, phone: user.phone });
+
+    // ✅ RECHERCHER L'OTP - VERSION SIMPLIFIÉE
+    const otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
-        email: searchIdentifier,  // ← Utilise le format exact de la base
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
 
-    // Fallback : essayer avec l'identifiant normalisé (sans +)
-    if (!otpEntry && !isEmail) {
-      const normalizedPhone = this.normalizePhone(cleanIdentifier);
-      otpEntry = await this.prisma.otp.findFirst({
-        where: {
-          userId: user.id,
-          email: normalizedPhone,
-          otpCode: code.toString(),
-          isUsed: false,
-          expiresAt: { gt: new Date() },
-        },
-      });
-    }
+    // Si l'OTP est trouvé, on vérifie que l'email correspond
+    if (otpEntry) {
+      console.log('✅ OTP trouvé:', { id: otpEntry.id, email: otpEntry.email });
 
-    // Fallback 2 : essayer avec le téléphone sans +
-    if (!otpEntry && !isEmail) {
+      // Vérifier que l'email correspond au téléphone de l'utilisateur
+      // ou à l'identifiant original
+      const phoneWithPlus = user.phone;
       const phoneWithoutPlus = user.phone.replace('+', '');
-      otpEntry = await this.prisma.otp.findFirst({
-        where: {
-          userId: user.id,
-          email: phoneWithoutPlus,
-          otpCode: code.toString(),
-          isUsed: false,
-          expiresAt: { gt: new Date() },
-        },
-      });
-    }
+      const originalIdentifier = isEmail ? cleanIdentifier.toLowerCase() : this.normalizePhone(cleanIdentifier);
 
-    if (!otpEntry) {
+      const isValid =
+        otpEntry.email === phoneWithPlus ||
+        otpEntry.email === phoneWithoutPlus ||
+        otpEntry.email === originalIdentifier ||
+        otpEntry.email === '+' + originalIdentifier.replace('+', '');
+
+      if (!isValid) {
+        console.log('❌ L\'email de l\'OTP ne correspond pas');
+        throw new BadRequestException(
+          this.i18nService.translate('otp_invalid', lang),
+        );
+      }
+    } else {
+      console.log('❌ Aucun OTP trouvé');
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
