@@ -1163,7 +1163,17 @@ export class AuthServiceService {
         this.i18nService.translate('password_too_short', lang),
       );
     }
+    const dbInfo = await this.prisma.$queryRaw`
+  SELECT DATABASE() as databaseName;
+`;
 
+    console.log('DATABASE CONNECTEE:', dbInfo);
+
+    const countUsers = await this.prisma.$queryRaw`
+  SELECT COUNT(*) as total FROM users;
+`;
+
+    console.log('TOTAL USERS:', countUsers);
     // ✅ RECHERCHE DIRECTE - SANS NORMALISATION
     let user = await this.prisma.user.findFirst({
       where: {
