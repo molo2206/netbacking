@@ -1164,7 +1164,7 @@ export class AuthServiceService {
     // Déterminer si c'est un email ou un téléphone
     const isEmail = cleanIdentifier.includes('@');
 
-    let user;
+    let user: any;
     let searchIdentifier: string;
 
     if (isEmail) {
@@ -1174,10 +1174,25 @@ export class AuthServiceService {
       });
     } else {
       // Normaliser le téléphone pour la recherche
-      searchIdentifier = this.normalizePhone(cleanIdentifier);
+      const normalizedPhone = this.normalizePhone(cleanIdentifier);
+
+      // ✅ Rechercher avec différents formats
       user = await this.prisma.user.findFirst({
-        where: { phone: searchIdentifier },
+        where: {
+          OR: [
+            { phone: normalizedPhone },
+            { phone: normalizedPhone.replace('+', '') },
+            { phone: '+' + normalizedPhone.replace('+', '') }
+          ]
+        },
       });
+
+      // ✅ Utiliser le phone exact de l'utilisateur trouvé
+      if (user) {
+        searchIdentifier = user.phone;
+      } else {
+        searchIdentifier = normalizedPhone;
+      }
     }
 
     if (!user) {
@@ -1186,16 +1201,30 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP AVEC L'IDENTIFIANT NORMALISÉ
-    const otpEntry = await this.prisma.otp.findFirst({
+    // ✅ RECHERCHER L'OTP AVEC L'IDENTIFIANT DE L'UTILISATEUR
+    let otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
-        email: searchIdentifier, // "243973760641" pour un téléphone
+        email: searchIdentifier,
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
+
+    // Si l'OTP n'est pas trouvé avec le phone exact, essayer avec l'identifiant original
+    if (!otpEntry) {
+      const originalIdentifier = isEmail ? cleanIdentifier.toLowerCase() : this.normalizePhone(cleanIdentifier);
+      otpEntry = await this.prisma.otp.findFirst({
+        where: {
+          userId: user.id,
+          email: originalIdentifier,
+          otpCode: code.toString(),
+          isUsed: false,
+          expiresAt: { gt: new Date() },
+        },
+      });
+    }
 
     if (!otpEntry) {
       throw new BadRequestException(
@@ -1220,7 +1249,6 @@ export class AuthServiceService {
       message: this.i18nService.translate('password_reset_success', lang),
     };
   }
-
   // ==================== CHANGE PASSWORD ====================
   async changePassword(
     userId: string,
