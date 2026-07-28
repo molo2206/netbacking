@@ -1166,7 +1166,7 @@ export class AuthServiceService {
 
     const isEmail = cleanIdentifier.includes('@');
 
-    // ✅ Fonction de normalisation intégrée
+    // ✅ Fonction de normalisation intégrée (garder le +)
     const normalizePhone = (phone: string): string => {
       let cleaned = phone.trim();
       cleaned = cleaned.replace(/[^0-9+]/g, '');
@@ -1192,8 +1192,6 @@ export class AuthServiceService {
       const normalizedPhone = normalizePhone(cleanIdentifier);
 
       console.log('🔍 [resetPassword] normalizedPhone:', normalizedPhone);
-      console.log('🔍 [resetPassword] normalizedPhone.replace("+", ""):', normalizedPhone.replace('+', ''));
-      console.log('🔍 [resetPassword] +' + normalizedPhone.replace('+', ''), ':', '+' + normalizedPhone.replace('+', ''));
 
       user = await this.prisma.user.findFirst({
         where: {
@@ -1219,9 +1217,10 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP
+    // ✅ RECHERCHER L'OTP AVEC LE CODE ET L'EMAIL
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
+        userId: user.id,                    // ← AJOUTÉ !
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
@@ -1236,15 +1235,7 @@ export class AuthServiceService {
     }
 
     if (!otpEntry) {
-      console.log('❌ [resetPassword] OTP not found for code:', code);
-      throw new BadRequestException(
-        this.i18nService.translate('otp_invalid', lang),
-      );
-    }
-
-    // ✅ Vérifier que l'OTP appartient à l'utilisateur
-    if (otpEntry.userId !== user.id) {
-      console.log('❌ [resetPassword] User ID mismatch');
+      console.log('❌ [resetPassword] OTP not found for user:', user.id);
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
