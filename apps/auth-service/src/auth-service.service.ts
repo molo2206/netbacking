@@ -1059,6 +1059,7 @@ export class AuthServiceService {
         );
     }
 
+    // Invalider les anciens OTP
     await this.prisma.otp.updateMany({
       where: { userId: user.id, isUsed: false, expiresAt: { gt: new Date() } },
       data: { isUsed: true },
@@ -1066,11 +1067,12 @@ export class AuthServiceService {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
+    // ✅ STOCKER L'IDENTIFIANT DANS LE CHAMP email (comme dans register)
     await this.prisma.otp.create({
       data: {
         id: crypto.randomUUID(),
         userId: user.id,
-        email: isEmail ? user.email : user.phone,
+        email: cleanIdentifier, // Stocke l'email OU le téléphone (comme dans register)
         otpCode,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         isUsed: false,
@@ -1116,9 +1118,9 @@ export class AuthServiceService {
       { identifier },
       ipAddress ?? null,
     );
+
     return { message: this.i18nService.translate('otp_sent', lang) };
   }
-
   // ==================== RESET PASSWORD ====================
   async resetPassword(resetPasswordDto: {
     identifier: string;
@@ -1135,40 +1137,56 @@ export class AuthServiceService {
       );
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { phone: cleanIdentifier },
-          { email: cleanIdentifier.toLowerCase() },
-        ],
-      },
-    });
-    if (!user)
+    // Déterminer si c'est un email ou un téléphone
+    const isEmail = cleanIdentifier.includes('@');
+
+    // Trouver l'utilisateur
+    let user;
+    if (isEmail) {
+      user = await this.prisma.user.findFirst({
+        where: { email: cleanIdentifier.toLowerCase() },
+      });
+    } else {
+      const normalizedPhone = this.normalizePhone(cleanIdentifier);
+      user = await this.prisma.user.findFirst({
+        where: { phone: normalizedPhone },
+      });
+    }
+
+    if (!user) {
       throw new BadRequestException(
         this.i18nService.translate('user_not_found', lang),
       );
+    }
 
+    // ✅ RECHERCHER L'OTP PAR IDENTIFIANT (comme dans verifyOtp)
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
+        userId: user.id,
+        email: cleanIdentifier, // Compare avec l'identifiant stocké
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
-    if (!otpEntry)
+
+    if (!otpEntry) {
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { password: hashedPassword },
     });
+
     await this.prisma.otp.update({
       where: { id: otpEntry.id },
       data: { isUsed: true },
     });
+
     return {
       message: this.i18nService.translate('password_reset_success', lang),
     };
