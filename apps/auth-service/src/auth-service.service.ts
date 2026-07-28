@@ -37,7 +37,28 @@ export class AuthServiceService {
   ) { }
 
   private normalizePhone(phone: string): string {
-    return phone.replace(/[^0-9]/g, '');
+    // Nettoyer les espaces
+    let cleaned = phone.trim();
+
+    // Si le téléphone commence par 00, remplacer par +
+    if (cleaned.startsWith('00')) {
+      cleaned = '+' + cleaned.substring(2);
+    }
+
+    // Si le téléphone commence par 0 (sans indicatif), ajouter +243
+    if (cleaned.startsWith('0') && !cleaned.startsWith('+')) {
+      cleaned = '+243' + cleaned.substring(1);
+    }
+
+    // Si le téléphone n'a pas de +, l'ajouter
+    if (!cleaned.startsWith('+')) {
+      cleaned = '+' + cleaned;
+    }
+
+    // Supprimer tous les caractères non numériques SAUF le +
+    cleaned = cleaned.replace(/[^0-9+]/g, '');
+
+    return cleaned;  // Retourne "+243973760641"
   }
 
   private async logAudit(
