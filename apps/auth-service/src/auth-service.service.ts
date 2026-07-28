@@ -1164,50 +1164,31 @@ export class AuthServiceService {
       );
     }
 
-    const isEmail = cleanIdentifier.includes('@');
+    // ✅ RECHERCHE DIRECTE - SANS NORMALISATION
+    let user: any = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: cleanIdentifier.toLowerCase() },
+          { phone: cleanIdentifier },
+          { phone: cleanIdentifier.replace('+', '') },
+          { phone: '+' + cleanIdentifier.replace('+', '') },
+          { phone: cleanIdentifier.replace(/[^0-9]/g, '') },
+          { phone: '+' + cleanIdentifier.replace(/[^0-9]/g, '') },
+        ],
+      },
+    });
 
-    let user: any;
-
-    // ✅ Une seule fonction de normalisation intégrée
-    const normalizePhone = (phone: string): string => {
-      let cleaned = phone.trim();
-      cleaned = cleaned.replace(/[^0-9+]/g, '');
-      if (cleaned.startsWith('00')) {
-        cleaned = '+' + cleaned.substring(2);
-      }
-      if (cleaned.startsWith('0') && !cleaned.startsWith('+')) {
-        cleaned = '+243' + cleaned.substring(1);
-      }
-      if (!cleaned.startsWith('+')) {
-        cleaned = '+' + cleaned;
-      }
-      return cleaned;
-    };
-
-    if (isEmail) {
+    // Si pas trouvé, essayer par clientId
+    if (!user) {
       user = await this.prisma.user.findFirst({
-        where: { email: cleanIdentifier.toLowerCase() },
+        where: { clientId: cleanIdentifier },
       });
-    } else {
-      const normalizedPhone = normalizePhone(cleanIdentifier);
+    }
 
-      console.log('🔍 [resetPassword] normalizedPhone:', normalizedPhone);
-
-      user = await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            { phone: normalizedPhone },
-            { phone: normalizedPhone.replace('+', '') },
-            { phone: '+' + normalizedPhone.replace('+', '') }
-          ]
-        },
-      });
-
-      console.log('🔍 [resetPassword] user found?', !!user);
-      if (user) {
-        console.log('🔍 [resetPassword] user.id:', user.id);
-        console.log('🔍 [resetPassword] user.phone:', user.phone);
-      }
+    console.log('🔍 [resetPassword] user found?', !!user);
+    if (user) {
+      console.log('🔍 [resetPassword] user.id:', user.id);
+      console.log('🔍 [resetPassword] user.phone:', user.phone);
     }
 
     if (!user) {
@@ -1217,7 +1198,7 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP AVEC LE CODE ET L'UTILISATEUR
+    // ✅ RECHERCHER L'OTP
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
