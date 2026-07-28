@@ -1166,17 +1166,20 @@ export class AuthServiceService {
 
     let user: any;
     let searchIdentifier: string;
+    let originalIdentifier: string;
 
     if (isEmail) {
-      searchIdentifier = cleanIdentifier.toLowerCase();
+      originalIdentifier = cleanIdentifier.toLowerCase();
+      searchIdentifier = originalIdentifier;
       user = await this.prisma.user.findFirst({
         where: { email: searchIdentifier },
       });
     } else {
       // Normaliser le téléphone pour la recherche
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
+      originalIdentifier = normalizedPhone;
 
-      // ✅ Rechercher avec différents formats
+      // ✅ Rechercher avec différents formats (avec et sans +)
       user = await this.prisma.user.findFirst({
         where: {
           OR: [
@@ -1187,34 +1190,37 @@ export class AuthServiceService {
         },
       });
 
-      // ✅ Utiliser le phone exact de l'utilisateur trouvé
+      // ✅ Si l'utilisateur est trouvé, utiliser son téléphone exact
       if (user) {
-        searchIdentifier = user.phone;
+        searchIdentifier = user.phone;  // ← Utiliser le format de la base
       } else {
         searchIdentifier = normalizedPhone;
       }
     }
 
     if (!user) {
+      console.log('❌ Utilisateur non trouvé pour:', cleanIdentifier);
       throw new BadRequestException(
         this.i18nService.translate('user_not_found', lang),
       );
     }
 
+    console.log('✅ Utilisateur trouvé:', { id: user.id, phone: user.phone, email: user.email });
+
     // ✅ RECHERCHER L'OTP AVEC L'IDENTIFIANT DE L'UTILISATEUR
     let otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
-        email: searchIdentifier,
+        email: searchIdentifier,  // ← Utilise le format exact de la base
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
 
-    // Si l'OTP n'est pas trouvé avec le phone exact, essayer avec l'identifiant original
+    // Fallback : essayer avec l'identifiant original normalisé
     if (!otpEntry) {
-      const originalIdentifier = isEmail ? cleanIdentifier.toLowerCase() : this.normalizePhone(cleanIdentifier);
+      console.log('⚠️ OTP non trouvé avec searchIdentifier, essai avec originalIdentifier:', originalIdentifier);
       otpEntry = await this.prisma.otp.findFirst({
         where: {
           userId: user.id,
@@ -1226,11 +1232,29 @@ export class AuthServiceService {
       });
     }
 
+    // Fallback 2 : essayer avec le téléphone sans +
+    if (!otpEntry && !isEmail) {
+      const phoneWithoutPlus = user.phone.replace('+', '');
+      console.log('⚠️ OTP non trouvé, essai avec phoneWithoutPlus:', phoneWithoutPlus);
+      otpEntry = await this.prisma.otp.findFirst({
+        where: {
+          userId: user.id,
+          email: phoneWithoutPlus,
+          otpCode: code.toString(),
+          isUsed: false,
+          expiresAt: { gt: new Date() },
+        },
+      });
+    }
+
     if (!otpEntry) {
+      console.log('❌ Aucun OTP trouvé pour l\'utilisateur:', user.id);
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
     }
+
+    console.log('✅ OTP trouvé:', { id: otpEntry.id, email: otpEntry.email });
 
     // Mettre à jour le mot de passe
     const hashedPassword = await bcrypt.hash(password, 10);
