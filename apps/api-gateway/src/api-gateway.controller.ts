@@ -316,7 +316,7 @@ export class ApiGatewayController {
     );
   }
 
-  @Post('auth/forgot-password')
+  @Post('forgot-password')
   @UsePipes(new ValidationPipe({
     whitelist: false,        // ← Ne pas filtrer les champs
     forbidNonWhitelisted: false,
