@@ -1048,7 +1048,7 @@ export class AuthServiceService {
           this.i18nService.translate('no_email', lang),
         );
     } else {
-      // Normaliser le téléphone : "+243973760641" -> "243973760641"
+      // ✅ Normaliser le téléphone comme dans resetPassword
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
       identifierToStore = normalizedPhone;
 
@@ -1065,20 +1065,25 @@ export class AuthServiceService {
         );
     }
 
-    // Invalider les anciens OTP
+    // ✅ Invalider UNIQUEMENT les OTP de cet utilisateur pour cet identifiant
     await this.prisma.otp.updateMany({
-      where: { userId: user.id, isUsed: false, expiresAt: { gt: new Date() } },
+      where: {
+        userId: user.id,
+        email: identifierToStore,  // ← Même logique que resetPassword
+        isUsed: false,
+        expiresAt: { gt: new Date() }
+      },
       data: { isUsed: true },
     });
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ CRÉER L'OTP AVEC L'IDENTIFIANT STOCKÉ (email ou téléphone normalisé)
+    // ✅ Créer l'OTP avec le même format que resetPassword
     await this.prisma.otp.create({
       data: {
         id: crypto.randomUUID(),
         userId: user.id,
-        email: identifierToStore, // "243973760641" pour un téléphone
+        email: identifierToStore,  // ← Stocké comme dans resetPassword
         otpCode,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         isUsed: false,

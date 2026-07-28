@@ -37,6 +37,7 @@ import { AssignMultipleResourcesDto } from 'apps/user-service/dto/assign-resourc
 import { firstValueFrom, catchError, timeout } from 'rxjs';
 import { TransferDto } from 'apps/transaction-service/dto/create-transaction.dto';
 import { transactions_status, transactions_type, transfers_platform, transfers_type } from '@prisma/client';
+import { ForgotPasswordDto } from 'apps/auth-service/src/dto/forgot-password.dto';
 
 @Controller()
 export class ApiGatewayController {
@@ -313,22 +314,31 @@ export class ApiGatewayController {
     );
   }
 
-  @Post('auth/forgot-password')
+  @Post('forgot-password')
   async forgotPassword(
-    @Body() body: any,
+    @Body() body: ForgotPasswordDto,  // ← Utilisez le DTO
     @Headers('lang') langHeader?: string,
   ) {
-    // ✅ SUPPRIMEZ LA VALIDATION - PASSEZ DIRECTEMENT
     const lang = langHeader || 'fr';
+
+    // ✅ L'email ou l'identifier est déjà validé par le DTO
+    const email = body.identifier || body.email;
+
+    if (!email) {
+      throw new HttpException(
+        'Identifier (email or phone) is required',
+        HttpStatus.BAD_REQUEST
+      );
+    }
 
     return this.sendAuthMessage(
       'auth.forgotPassword',
-      { email: body.identifier || body.email, lang },  // ← Envoie l'identifiant
+      { email, lang },
       'Forgot password failed',
       HttpStatus.BAD_REQUEST
     );
   }
-  
+
   @Post('auth/reset-password')
   async resetPassword(
     @Body()
