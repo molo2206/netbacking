@@ -1004,24 +1004,50 @@ export class AuthServiceService {
     code: string,
     lang: string = 'fr',
   ): Promise<{ message: string }> {
+    // ✅ Normaliser l'email pour la recherche
+    const normalizeIdentifier = (value: string): string => {
+      let cleaned = value.trim();
+      cleaned = cleaned.replace(/[^0-9+]/g, '');
+      if (cleaned.startsWith('00')) {
+        cleaned = '+' + cleaned.substring(2);
+      }
+      if (cleaned.startsWith('0') && !cleaned.startsWith('+')) {
+        cleaned = '+243' + cleaned.substring(1);
+      }
+      if (!cleaned.startsWith('+')) {
+        cleaned = '+' + cleaned;
+      }
+      return cleaned;
+    };
+
+    const normalizedEmail = normalizeIdentifier(email);
+
+    // ✅ Rechercher avec différents formats
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
-        email: email,
+        OR: [
+          { email: normalizedEmail },
+          { email: normalizedEmail.replace('+', '') },
+          { email: '+' + normalizedEmail.replace('+', '') },
+          { email: normalizedEmail.replace(/[^0-9]/g, '') },
+          { email: '+' + normalizedEmail.replace(/[^0-9]/g, '') },
+        ],
         otpCode: code,
         isUsed: false,
         expiresAt: { gt: new Date() },
       },
     });
+
     if (!otpEntry) {
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
     }
+
     return {
       message: this.i18nService.translate('otp_validated', lang),
     };
   }
-
   // ==================== SEND RESET PASSWORD OTP ====================
   async sendResetPasswordOtp(
     identifier: string,
@@ -1163,17 +1189,6 @@ export class AuthServiceService {
         this.i18nService.translate('password_too_short', lang),
       );
     }
-    const dbInfo = await this.prisma.$queryRaw`
-  SELECT DATABASE() as databaseName;
-`;
-
-    console.log('DATABASE CONNECTEE:', dbInfo);
-
-    const countUsers = await this.prisma.$queryRaw`
-  SELECT COUNT(*) as total FROM users;
-`;
-
-    console.log('TOTAL USERS:', countUsers);
     // ✅ RECHERCHE DIRECTE - SANS NORMALISATION
     let user = await this.prisma.user.findFirst({
       where: {
