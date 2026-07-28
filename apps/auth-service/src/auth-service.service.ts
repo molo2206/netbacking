@@ -1004,7 +1004,7 @@ export class AuthServiceService {
     code: string,
     lang: string = 'fr',
   ): Promise<{ message: string }> {
-    // ✅ Normaliser l'email pour la recherche
+    // ✅ Fonction de normalisation intégrée
     const normalizeIdentifier = (value: string): string => {
       let cleaned = value.trim();
       cleaned = cleaned.replace(/[^0-9+]/g, '');
@@ -1043,6 +1043,12 @@ export class AuthServiceService {
         this.i18nService.translate('otp_invalid', lang),
       );
     }
+
+    // ✅ Marquer l'OTP comme utilisé
+    await this.prisma.otp.update({
+      where: { id: otpEntry.id },
+      data: { isUsed: true },
+    });
 
     return {
       message: this.i18nService.translate('otp_validated', lang),

@@ -328,7 +328,7 @@ export class ApiGatewayController {
       HttpStatus.BAD_REQUEST
     );
   }
-  
+
   @Post('auth/reset-password')
   async resetPassword(
     @Body()
@@ -366,17 +366,21 @@ export class ApiGatewayController {
     @Body() body: any,
     @Headers('lang') langHeader?: string,
   ) {
-    if (!body.email) {
-      throw new HttpException('Email is required', HttpStatus.BAD_REQUEST);
+    // ✅ Accepter "identifier" ou "email"
+    const email = body.identifier || body.email;
+
+    if (!email) {
+      throw new HttpException('Email or identifier is required', HttpStatus.BAD_REQUEST);
     }
     if (!body.code) {
       throw new HttpException('OTP code is required', HttpStatus.BAD_REQUEST);
     }
+
     const lang = langHeader || 'fr';
     return this.sendAuthMessage(
       'auth.verifyOtp',
       {
-        email: body.email,
+        email: email,
         code: body.code,
         lang
       },
