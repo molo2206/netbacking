@@ -21,6 +21,8 @@ import {
   Query,
   BadRequestException,
   Request,
+  ValidationPipe,
+  UsePipes,
 } from '@nestjs/common';
 import {
   ClientProxy,
@@ -314,9 +316,15 @@ export class ApiGatewayController {
     );
   }
 
-  @Post('forgot-password')
+  @Post('auth/forgot-password')
+  @UsePipes(new ValidationPipe({
+    whitelist: false,        // ← Ne pas filtrer les champs
+    forbidNonWhitelisted: false,
+    transform: false,
+    skipMissingProperties: true  // ← Ignorer les propriétés manquantes
+  }))
   async forgotPassword(
-    @Body() body: ForgotPasswordDto,  // ← Utilisez le DTO
+    @Body() body: ForgotPasswordDto,
     @Headers('lang') langHeader?: string,
   ) {
     const lang = langHeader || 'fr';
