@@ -318,22 +318,17 @@ export class ApiGatewayController {
     @Body() body: any,
     @Headers('lang') langHeader?: string,
   ) {
-    // ✅ Accepter "identifier" ou "email"
-    const identifier = body.identifier || body.email;
-
-    if (!identifier) {
-      throw new HttpException('Identifier (email or phone) is required', HttpStatus.BAD_REQUEST);
-    }
-
+    // ✅ SUPPRIMEZ LA VALIDATION - PASSEZ DIRECTEMENT
     const lang = langHeader || 'fr';
+
     return this.sendAuthMessage(
       'auth.forgotPassword',
-      { identifier: identifier, lang },  // ← Envoyer "identifier"
+      { email: body.identifier || body.email, lang },  // ← Envoie l'identifiant
       'Forgot password failed',
       HttpStatus.BAD_REQUEST
     );
   }
-
+  
   @Post('auth/reset-password')
   async resetPassword(
     @Body()
