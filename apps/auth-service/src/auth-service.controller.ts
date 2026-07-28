@@ -133,11 +133,18 @@ export class AuthServiceController {
   }
 
   @MessagePattern('auth.forgotPassword')
-  async forgotPassword(@Payload() data: { email: string; lang?: string }) {
+  async forgotPassword(@Payload() data: { identifier?: string; email?: string; lang?: string }) {
     try {
-      console.log('[AuthService] Forgot password request received:', data.email);
+      // ✅ Utiliser "identifier" ou "email"
+      const identifier = data.identifier || data.email;
+
+      if (!identifier) {
+        throw new Error('Identifier (email or phone) is required');
+      }
+
+      console.log('[AuthService] Forgot password request received:', identifier);
       return await this.authService.sendResetPasswordOtp(
-        data.email,
+        identifier,  // ← Passer l'identifiant
         undefined,
         data.lang || 'fr',
       );
@@ -151,7 +158,7 @@ export class AuthServiceController {
     }
   }
 
- @MessagePattern('reset_password')
+  @MessagePattern('reset_password')
   async resetPassword(
     @Payload()
     data: {
@@ -182,7 +189,7 @@ export class AuthServiceController {
       });
     }
   }
-  
+
   @MessagePattern('auth.verifyOtp')
   async verifyOtp(@Payload() data: { email: string; code: string; lang?: string }) {
     try {
