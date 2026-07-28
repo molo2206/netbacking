@@ -1165,18 +1165,13 @@ export class AuthServiceService {
     }
 
     // ✅ RECHERCHE DIRECTE - SANS NORMALISATION
-    let user: any = await this.prisma.user.findFirst({
+    let user = await this.prisma.user.findFirst({
       where: {
-        OR: [
-          { email: cleanIdentifier.toLowerCase() },
-          { phone: cleanIdentifier },
-          { phone: cleanIdentifier.replace('+', '') },
-          { phone: '+' + cleanIdentifier.replace('+', '') },
-          { phone: cleanIdentifier.replace(/[^0-9]/g, '') },
-          { phone: '+' + cleanIdentifier.replace(/[^0-9]/g, '') },
-        ],
+        phone: '+243973760641',
       },
     });
+
+    console.log('TEST USER:', user);
 
     // Si pas trouvé, essayer par clientId
     if (!user) {
