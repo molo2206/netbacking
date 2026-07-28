@@ -316,20 +316,18 @@ export class ApiGatewayController {
     );
   }
 
-  @Post('auth/forgot/password')
+  @Post('auth/forgot-password')  // ← Changé de "auth/forgot/password" à "auth/forgot-password"
   @UsePipes(new ValidationPipe({
-    whitelist: false,        // ← Ne pas filtrer les champs
+    whitelist: false,
     forbidNonWhitelisted: false,
     transform: false,
-    skipMissingProperties: true  // ← Ignorer les propriétés manquantes
+    skipMissingProperties: true
   }))
   async forgotPassword(
     @Body() body: ForgotPasswordDto,
     @Headers('lang') langHeader?: string,
   ) {
     const lang = langHeader || 'fr';
-
-    // ✅ L'email ou l'identifier est déjà validé par le DTO
     const email = body.identifier || body.email;
 
     if (!email) {
