@@ -1166,7 +1166,9 @@ export class AuthServiceService {
 
     const isEmail = cleanIdentifier.includes('@');
 
-    // ✅ Fonction de normalisation intégrée (garder le +)
+    let user: any;
+
+    // ✅ Une seule fonction de normalisation intégrée
     const normalizePhone = (phone: string): string => {
       let cleaned = phone.trim();
       cleaned = cleaned.replace(/[^0-9+]/g, '');
@@ -1181,8 +1183,6 @@ export class AuthServiceService {
       }
       return cleaned;
     };
-
-    let user: any;
 
     if (isEmail) {
       user = await this.prisma.user.findFirst({
@@ -1217,10 +1217,10 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP AVEC LE CODE ET L'EMAIL
+    // ✅ RECHERCHER L'OTP AVEC LE CODE ET L'UTILISATEUR
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
-        userId: user.id,                    // ← AJOUTÉ !
+        userId: user.id,
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
@@ -1241,12 +1241,14 @@ export class AuthServiceService {
       );
     }
 
+    // Mettre à jour le mot de passe
     const hashedPassword = await bcrypt.hash(password, 10);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { password: hashedPassword },
     });
 
+    // Marquer l'OTP comme utilisé
     await this.prisma.otp.update({
       where: { id: otpEntry.id },
       data: { isUsed: true },
