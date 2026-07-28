@@ -21,8 +21,6 @@ import {
   Query,
   BadRequestException,
   Request,
-  ValidationPipe,
-  UsePipes,
 } from '@nestjs/common';
 import {
   ClientProxy,
@@ -39,7 +37,6 @@ import { AssignMultipleResourcesDto } from 'apps/user-service/dto/assign-resourc
 import { firstValueFrom, catchError, timeout } from 'rxjs';
 import { TransferDto } from 'apps/transaction-service/dto/create-transaction.dto';
 import { transactions_status, transactions_type, transfers_platform, transfers_type } from '@prisma/client';
-import { ForgotPasswordDto } from 'apps/auth-service/src/dto/forgot-password.dto';
 
 @Controller()
 export class ApiGatewayController {
@@ -316,35 +313,22 @@ export class ApiGatewayController {
     );
   }
 
-  @Post('auth/forgot-password')  // ← Changé de "auth/forgot/password" à "auth/forgot-password"
-  @UsePipes(new ValidationPipe({
-    whitelist: false,
-    forbidNonWhitelisted: false,
-    transform: false,
-    skipMissingProperties: true
-  }))
+  @Post('auth/forgot-password')
   async forgotPassword(
-    @Body() body: ForgotPasswordDto,
+    @Body() body: any,
     @Headers('lang') langHeader?: string,
   ) {
+    // ✅ SUPPRIMEZ LA VALIDATION - PASSEZ DIRECTEMENT
     const lang = langHeader || 'fr';
-    const email = body.identifier || body.email;
-
-    if (!email) {
-      throw new HttpException(
-        'Identifier (email or phone) is required',
-        HttpStatus.BAD_REQUEST
-      );
-    }
 
     return this.sendAuthMessage(
       'auth.forgotPassword',
-      { email, lang },
+      { email: body.identifier || body.email, lang },  // ← Envoie l'identifiant
       'Forgot password failed',
       HttpStatus.BAD_REQUEST
     );
   }
-
+  
   @Post('auth/reset-password')
   async resetPassword(
     @Body()
