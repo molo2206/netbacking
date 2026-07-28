@@ -1032,9 +1032,12 @@ export class AuthServiceService {
     const cleanIdentifier = identifier.trim();
 
     let user;
+    let identifierToStore: string;
+
     if (isEmail) {
+      identifierToStore = cleanIdentifier.toLowerCase();
       user = await this.prisma.user.findFirst({
-        where: { email: cleanIdentifier.toLowerCase() },
+        where: { email: identifierToStore },
       });
       if (!user)
         throw new BadRequestException(
@@ -1045,7 +1048,10 @@ export class AuthServiceService {
           this.i18nService.translate('no_email', lang),
         );
     } else {
+      // Normaliser le téléphone : "+243973760641" -> "243973760641"
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
+      identifierToStore = normalizedPhone;
+
       user = await this.prisma.user.findFirst({
         where: { phone: normalizedPhone },
       });
@@ -1067,18 +1073,19 @@ export class AuthServiceService {
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ✅ STOCKER L'IDENTIFIANT DANS LE CHAMP email (comme dans register)
+    // ✅ CRÉER L'OTP AVEC L'IDENTIFIANT STOCKÉ (email ou téléphone normalisé)
     await this.prisma.otp.create({
       data: {
         id: crypto.randomUUID(),
         userId: user.id,
-        email: cleanIdentifier, // Stocke l'email OU le téléphone (comme dans register)
+        email: identifierToStore, // "243973760641" pour un téléphone
         otpCode,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
         isUsed: false,
       },
     });
 
+    // Envoyer par email ou SMS
     if (isEmail) {
       try {
         await this.mailService.sendHtmlEmail(
@@ -1140,16 +1147,19 @@ export class AuthServiceService {
     // Déterminer si c'est un email ou un téléphone
     const isEmail = cleanIdentifier.includes('@');
 
-    // Trouver l'utilisateur
     let user;
+    let searchIdentifier: string;
+
     if (isEmail) {
+      searchIdentifier = cleanIdentifier.toLowerCase();
       user = await this.prisma.user.findFirst({
-        where: { email: cleanIdentifier.toLowerCase() },
+        where: { email: searchIdentifier },
       });
     } else {
-      const normalizedPhone = this.normalizePhone(cleanIdentifier);
+      // Normaliser le téléphone pour la recherche
+      searchIdentifier = this.normalizePhone(cleanIdentifier);
       user = await this.prisma.user.findFirst({
-        where: { phone: normalizedPhone },
+        where: { phone: searchIdentifier },
       });
     }
 
@@ -1159,11 +1169,11 @@ export class AuthServiceService {
       );
     }
 
-    // ✅ RECHERCHER L'OTP PAR IDENTIFIANT (comme dans verifyOtp)
+    // ✅ RECHERCHER L'OTP AVEC L'IDENTIFIANT NORMALISÉ
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
-        email: cleanIdentifier, // Compare avec l'identifiant stocké
+        email: searchIdentifier, // "243973760641" pour un téléphone
         otpCode: code.toString(),
         isUsed: false,
         expiresAt: { gt: new Date() },
@@ -1176,12 +1186,14 @@ export class AuthServiceService {
       );
     }
 
+    // Mettre à jour le mot de passe
     const hashedPassword = await bcrypt.hash(password, 10);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { password: hashedPassword },
     });
 
+    // Marquer l'OTP comme utilisé
     await this.prisma.otp.update({
       where: { id: otpEntry.id },
       data: { isUsed: true },
