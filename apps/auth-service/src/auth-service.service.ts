@@ -1163,6 +1163,22 @@ export class AuthServiceService {
 
     const isEmail = cleanIdentifier.includes('@');
 
+    // ✅ FONCTION DE NORMALISATION INTÉGRÉE
+    const normalizePhone = (phone: string): string => {
+      let cleaned = phone.trim();
+      cleaned = cleaned.replace(/[^0-9+]/g, '');
+      if (cleaned.startsWith('00')) {
+        cleaned = '+' + cleaned.substring(2);
+      }
+      if (cleaned.startsWith('0') && !cleaned.startsWith('+')) {
+        cleaned = '+243' + cleaned.substring(1);
+      }
+      if (!cleaned.startsWith('+')) {
+        cleaned = '+' + cleaned;
+      }
+      return cleaned;
+    };
+
     let user: any;
 
     if (isEmail) {
@@ -1171,7 +1187,10 @@ export class AuthServiceService {
       });
     } else {
       // Normaliser le téléphone
-      const normalizedPhone = this.normalizePhone(cleanIdentifier);
+      const normalizedPhone = normalizePhone(cleanIdentifier);
+
+      console.log('🔍 [resetPassword] cleanIdentifier:', cleanIdentifier);
+      console.log('🔍 [resetPassword] normalizedPhone:', normalizedPhone);
 
       user = await this.prisma.user.findFirst({
         where: {
@@ -1185,6 +1204,7 @@ export class AuthServiceService {
     }
 
     if (!user) {
+      console.log('❌ Utilisateur non trouvé pour:', cleanIdentifier);
       throw new BadRequestException(
         this.i18nService.translate('user_not_found', lang),
       );
@@ -1192,7 +1212,7 @@ export class AuthServiceService {
 
     console.log('✅ Utilisateur trouvé:', { id: user.id, phone: user.phone });
 
-    // ✅ RECHERCHER L'OTP - VERSION SIMPLIFIÉE
+    // ✅ RECHERCHER L'OTP
     const otpEntry = await this.prisma.otp.findFirst({
       where: {
         userId: user.id,
@@ -1202,30 +1222,28 @@ export class AuthServiceService {
       },
     });
 
-    // Si l'OTP est trouvé, on vérifie que l'email correspond
-    if (otpEntry) {
-      console.log('✅ OTP trouvé:', { id: otpEntry.id, email: otpEntry.email });
+    if (!otpEntry) {
+      console.log('❌ Aucun OTP trouvé pour l\'utilisateur:', user.id);
+      throw new BadRequestException(
+        this.i18nService.translate('otp_invalid', lang),
+      );
+    }
 
-      // Vérifier que l'email correspond au téléphone de l'utilisateur
-      // ou à l'identifiant original
-      const phoneWithPlus = user.phone;
-      const phoneWithoutPlus = user.phone.replace('+', '');
-      const originalIdentifier = isEmail ? cleanIdentifier.toLowerCase() : this.normalizePhone(cleanIdentifier);
+    console.log('✅ OTP trouvé:', { id: otpEntry.id, email: otpEntry.email });
 
-      const isValid =
-        otpEntry.email === phoneWithPlus ||
-        otpEntry.email === phoneWithoutPlus ||
-        otpEntry.email === originalIdentifier ||
-        otpEntry.email === '+' + originalIdentifier.replace('+', '');
+    // Vérifier que l'OTP correspond au téléphone
+    const phoneWithPlus = user.phone;
+    const phoneWithoutPlus = user.phone.replace('+', '');
+    const normalizedIdentifier = isEmail ? cleanIdentifier.toLowerCase() : normalizePhone(cleanIdentifier);
 
-      if (!isValid) {
-        console.log('❌ L\'email de l\'OTP ne correspond pas');
-        throw new BadRequestException(
-          this.i18nService.translate('otp_invalid', lang),
-        );
-      }
-    } else {
-      console.log('❌ Aucun OTP trouvé');
+    const isValid =
+      otpEntry.email === phoneWithPlus ||
+      otpEntry.email === phoneWithoutPlus ||
+      otpEntry.email === normalizedIdentifier ||
+      otpEntry.email === '+' + normalizedIdentifier.replace('+', '');
+
+    if (!isValid) {
+      console.log('❌ L\'email de l\'OTP ne correspond pas');
       throw new BadRequestException(
         this.i18nService.translate('otp_invalid', lang),
       );
