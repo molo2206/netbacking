@@ -318,13 +318,17 @@ export class ApiGatewayController {
     @Body() body: any,
     @Headers('lang') langHeader?: string,
   ) {
-    if (!body.email) {
-      throw new HttpException('Email is required', HttpStatus.BAD_REQUEST);
+    // ✅ Accepter "identifier" ou "email"
+    const identifier = body.identifier || body.email;
+
+    if (!identifier) {
+      throw new HttpException('Identifier (email or phone) is required', HttpStatus.BAD_REQUEST);
     }
+
     const lang = langHeader || 'fr';
     return this.sendAuthMessage(
       'auth.forgotPassword',
-      { email: body.email, lang },
+      { identifier: identifier, lang },  // ← Envoyer "identifier"
       'Forgot password failed',
       HttpStatus.BAD_REQUEST
     );
