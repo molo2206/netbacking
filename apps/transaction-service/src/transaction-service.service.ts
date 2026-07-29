@@ -41,9 +41,21 @@ export class TransactionServiceService {
   }
 
   private generateTransferReference(): string {
-    // Générer 8 chiffres aléatoires
+    // 8 chiffres aléatoires pour le transfert
     const random = Math.floor(10000000 + Math.random() * 90000000).toString();
     return random;
+  }
+
+  private generateDebitReference(): string {
+    // 8 chiffres aléatoires pour DEBIT (commence par 1)
+    const random = Math.floor(10000000 + Math.random() * 90000000).toString();
+    return `1${random.substring(1)}`; // Ex: 17348291
+  }
+
+  private generateCreditReference(): string {
+    // 8 chiffres aléatoires pour CREDIT (commence par 2)
+    const random = Math.floor(10000000 + Math.random() * 90000000).toString();
+    return `2${random.substring(1)}`; // Ex: 29483726
   }
 
   private async logAudit(
@@ -439,7 +451,7 @@ export class TransactionServiceService {
             amount: new Decimal(totalAmount),
             balanceBefore: new Decimal(senderBalance),
             balanceAfter: new Decimal(newSenderBalance),
-            reference: reference,
+            reference: this.generateDebitReference(),
             description: this.i18nService.translate('transfer_description', lang, {
               receiverName: receiverName
             }),
@@ -458,7 +470,7 @@ export class TransactionServiceService {
             amount: new Decimal(data.amount),
             balanceBefore: new Decimal(receiverBalance),
             balanceAfter: new Decimal(newReceiverBalance),
-            reference: reference,
+            reference: this.generateCreditReference(),
             description: this.i18nService.translate('transfer_from', lang, {
               senderName: `${senderAccount.clients?.firstName || 'Unknown'} ${senderAccount.clients?.lastName || ''}`.trim()
             }),
