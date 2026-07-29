@@ -179,6 +179,7 @@ model Beneficiary {
   id            String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
   userId        String    @db.VarChar(36)
   accountNumber String    @db.VarChar(100)
+  currency      String?   @db.VarChar(11)
   accountName   String    @db.VarChar(255)
   bankName      String?   @db.VarChar(255)
   phone         String?   @db.VarChar(50)

@@ -89,6 +89,7 @@ export class TransactionServiceService {
     userId: string,
     accountNumber: string,
     accountName: string,
+    currency: string,
     bankName: string | undefined,
     phone: string | undefined,
     email: string | undefined,
@@ -117,6 +118,7 @@ export class TransactionServiceService {
             phone: phone || null,
             email: email || null,
             nickname: nickname || accountName,
+            currency: currency,
             isFavorite: false,
           },
         });
@@ -134,6 +136,7 @@ export class TransactionServiceService {
             bankName: bankName || existingBeneficiary.bankName,
             phone: phone || existingBeneficiary.phone,
             email: email || existingBeneficiary.email,
+            currency: currency,
             updatedAt: new Date(),
           },
         });
@@ -368,6 +371,7 @@ export class TransactionServiceService {
       let receiverBankName = 'Banque inconnue';
       let receiverPhone = data.receiverPhone || null;
       let receiverEmail = data.receiverEmail || null;
+      let receiverCurrency = data.currency || null
 
       if (receiverAccount.clients) {
         const client = receiverAccount.clients;
@@ -480,6 +484,7 @@ export class TransactionServiceService {
           await this.saveBeneficiary(
             data.initiatedBy,
             receiverAccountNumber,
+            receiverCurrency || '',
             receiverName,
             receiverBankName,
             receiverPhone || undefined,
@@ -1641,9 +1646,6 @@ export class TransactionServiceService {
       });
     }
   }
-
-  // apps/transaction-service/src/transaction-service.service.ts
-
   // ========================= BÉNÉFICIAIRES =========================
 
   // 1. CRÉER UN BÉNÉFICIAIRE
@@ -1656,6 +1658,7 @@ export class TransactionServiceService {
     email?: string;
     nickname?: string;
     isFavorite?: boolean;
+    currency?: string;
     lang?: string;
   }) {
     const lang = data.lang || 'fr';
@@ -1704,6 +1707,7 @@ export class TransactionServiceService {
           phone: data.phone || null,
           email: data.email || null,
           nickname: data.nickname || data.accountName,
+          currency: data.currency,
           isFavorite: data.isFavorite || false,
         },
       });
@@ -1734,6 +1738,7 @@ export class TransactionServiceService {
     email?: string;
     nickname?: string;
     isFavorite?: boolean;
+    currency?: string;
     lang?: string;
   }) {
     const lang = data.lang || 'fr';
@@ -1767,6 +1772,7 @@ export class TransactionServiceService {
       if (data.phone !== undefined) updateData.phone = data.phone;
       if (data.email !== undefined) updateData.email = data.email;
       if (data.nickname !== undefined) updateData.nickname = data.nickname;
+      if (data.currency !== undefined) updateData.currency = data.currency;
       if (data.isFavorite !== undefined) updateData.isFavorite = data.isFavorite;
       updateData.updatedAt = new Date();
 
