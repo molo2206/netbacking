@@ -96,5 +96,7 @@
   "beneficiary_already_exists": "Ce bénéficiaire existe déjà",
   "balance_retrieved": "Solde récupéré avec succès",
   "balance_failed": "Échec de la récupération du solde",
-  "account_access_denied": "Accès refusé à ce compte"
+  "account_access_denied": "Accès refusé à ce compte",
+  "transfer_description": "Transfert à {{receiverName}}",
+  "transfer_from": "Transfert de {{senderName}}"
 }

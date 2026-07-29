@@ -41,9 +41,9 @@ export class TransactionServiceService {
   }
 
   private generateTransferReference(): string {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = crypto.randomBytes(6).toString('hex').toUpperCase();
-    return `TRF-${timestamp}-${random}`;
+    // Générer 8 chiffres aléatoires
+    const random = Math.floor(10000000 + Math.random() * 90000000).toString();
+    return random;
   }
 
   private async logAudit(
@@ -200,8 +200,6 @@ export class TransactionServiceService {
   }
 
   // ========================= TRANSFERT =========================
-  // apps/transaction-service/src/transaction-service.service.ts
-
   async transfer(data: {
     senderAccountNumber: string;
     receiverAccountNumber: string;
@@ -259,12 +257,10 @@ export class TransactionServiceService {
         });
       }
 
-      // ✅ Vérification du PIN hashé avec bcrypt - Correction du type null
       const isPinValid = user.pin ? this.verifyPin(data.pin, user.pin) : false;
 
       if (!isPinValid) {
         const newAttempts = (user.failedPinAttempts || 0) + 1;
-        // ✅ Correction du type pour pinLockedUntil
         let pinLockedUntil: Date | null = null;
 
         if (newAttempts >= 3) {
@@ -286,7 +282,6 @@ export class TransactionServiceService {
         });
       }
 
-      // Réinitialiser les tentatives échouées si le PIN est valide
       if (user.failedPinAttempts && user.failedPinAttempts > 0) {
         await this.prisma.user.update({
           where: { id: data.initiatedBy },
@@ -371,7 +366,7 @@ export class TransactionServiceService {
       let receiverBankName = 'Banque inconnue';
       let receiverPhone = data.receiverPhone || null;
       let receiverEmail = data.receiverEmail || null;
-      let receiverCurrency = data.currency || null
+      let receiverCurrency = data.currency || null;
 
       if (receiverAccount.clients) {
         const client = receiverAccount.clients;
@@ -444,8 +439,10 @@ export class TransactionServiceService {
             amount: new Decimal(totalAmount),
             balanceBefore: new Decimal(senderBalance),
             balanceAfter: new Decimal(newSenderBalance),
-            reference: `DEBIT-${reference}`,
-            description: `Transfer to ${receiverName}`,
+            reference: reference,
+            description: this.i18nService.translate('transfer_description', lang, {
+              receiverName: receiverName
+            }),
             status: transactions_status.COMPLETED,
             movement: transactions_movement.DEBIT,
             currency: senderAccount.currency
@@ -461,8 +458,10 @@ export class TransactionServiceService {
             amount: new Decimal(data.amount),
             balanceBefore: new Decimal(receiverBalance),
             balanceAfter: new Decimal(newReceiverBalance),
-            reference: `CREDIT-${reference}`,
-            description: `Transfer from ${senderAccount.clients?.firstName || 'Unknown'} ${senderAccount.clients?.lastName || ''}`.trim(),
+            reference: reference,
+            description: this.i18nService.translate('transfer_from', lang, {
+              senderName: `${senderAccount.clients?.firstName || 'Unknown'} ${senderAccount.clients?.lastName || ''}`.trim()
+            }),
             status: transactions_status.COMPLETED,
             movement: transactions_movement.CREDIT,
             currency: senderAccount.currency
@@ -484,7 +483,7 @@ export class TransactionServiceService {
           await this.saveBeneficiary(
             data.initiatedBy,
             receiverAccountNumber,
-            senderAccount.currency || 'XAF', // ✅ Devise du compte expéditeur
+            senderAccount.currency || 'XAF',
             receiverName,
             receiverBankName,
             receiverPhone || undefined,

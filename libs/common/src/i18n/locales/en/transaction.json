@@ -96,5 +96,7 @@
   "beneficiary_already_exists": "This beneficiary already exists",
   "balance_retrieved": "Balance retrieved successfully",
   "balance_failed": "Failed to retrieve balance",
-  "account_access_denied": "Access denied to this account"
+  "account_access_denied": "Access denied to this account",
+  "transfer_description": "Transfer to {{receiverName}}",
+  "transfer_from": "Transfer from {{senderName}}"
 }

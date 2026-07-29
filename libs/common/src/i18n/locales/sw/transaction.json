@@ -96,5 +96,7 @@
   "beneficiary_already_exists": "Mpokeaji huyu tayari yupo",
   "balance_retrieved": "Salio limepatikana kikamilifu",
   "balance_failed": "Imeshindwa kupata salio",
-  "account_access_denied": "Imekataliwa kupata akaunti hii"
+  "account_access_denied": "Imekataliwa kupata akaunti hii",
+  "transfer_description": "Uhamisho kwa {{receiverName}}",
+  "transfer_from": "Uhamisho kutoka {{senderName}}"
 }
