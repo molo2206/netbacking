@@ -118,8 +118,9 @@ export class TransactionServiceController {
   }
 
   // ==================== RELEVÉ DE COMPTE ====================@MessagePattern('transaction.getStatement')
+  @MessagePattern('transaction.getStatement')
   async getAccountStatement(@Payload() data: {
-    accountNumber: string;  // ✅ Changé de accountId à accountNumber
+    accountNumber: string;
     startDate?: string;
     endDate?: string;
     page?: number;
@@ -129,6 +130,8 @@ export class TransactionServiceController {
     lang?: string;
   }) {
     try {
+      console.log('[Controller] getAccountStatement received:', data);
+
       if (!data.accountNumber) {
         throw new RpcException({
           status: 'error',
@@ -141,7 +144,7 @@ export class TransactionServiceController {
       const endDate = data.endDate ? new Date(data.endDate) : undefined;
 
       const result = await this.transactionService.getAccountStatement(
-        data.accountNumber,  // ✅ Passer accountNumber
+        data.accountNumber,
         {
           startDate,
           endDate,
@@ -153,14 +156,16 @@ export class TransactionServiceController {
         }
       );
 
+      console.log('[Controller] getAccountStatement result:', result);
+
       return {
         success: true,
         message: result.message || 'Relevé de compte récupéré avec succès',
         data: result.data,
       };
     } catch (error) {
+      console.error('[Controller] getAccountStatement error:', error);
       if (error instanceof RpcException) throw error;
-      console.error('[TransactionController] getAccountStatement error:', error);
       throw new RpcException({
         status: 'error',
         message: error.message || 'Failed to get statement',
