@@ -442,7 +442,7 @@ export class TransactionServiceService {
           },
         });
 
-        await prisma.transaction.create({
+        const transSend = await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: senderAccount.id,
@@ -524,7 +524,7 @@ export class TransactionServiceService {
         transfer.id,
       );
 
-      // 7. Récupérer le transfert complété
+      // 7. Récupérer le transfert complété avec les transactions
       const completedTransfer = await this.prisma.transfer.findUnique({
         where: { id: transfer.id },
         include: {
@@ -535,7 +535,7 @@ export class TransactionServiceService {
             include: { clients: true },
           },
           senderUser: true,
-          transaction: true,
+          transaction: true, // ← transactions liées au transfert
         },
       });
 
@@ -546,6 +546,11 @@ export class TransactionServiceService {
           statusCode: 404,
         });
       }
+
+      // ✅ Récupérer l'ID de la transaction DEBIT (celle de l'expéditeur)
+      const senderTransaction = completedTransfer.transaction?.find(
+        (t) => t.accountId === senderAccount.id && t.movement === 'DEBIT'
+      );
 
       // 8. Notifications
       try {
@@ -600,7 +605,8 @@ export class TransactionServiceService {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
         data: {
-          transactionId: completedTransfer.transaction?.[0]?.id || null, // ← UNIQUEMENT l'ID de la transaction
+          transactionId: senderTransaction?.id || null, // ← ID de la transaction DEBIT (expéditeur)
+          transferId: completedTransfer.id,
           reference: completedTransfer.reference,
           senderAccountId: completedTransfer.senderAccountId,
           receiverAccountId: completedTransfer.receiverAccountId,
