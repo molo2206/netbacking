@@ -88,8 +88,8 @@ export class TransactionServiceService {
   private async saveBeneficiary(
     userId: string,
     accountNumber: string,
+    currency: string,  // ✅ Ajout du paramètre currency
     accountName: string,
-    currency: string,
     bankName: string | undefined,
     phone: string | undefined,
     email: string | undefined,
@@ -107,18 +107,18 @@ export class TransactionServiceService {
       });
 
       if (!existingBeneficiary) {
-        // Créer le bénéficiaire
+        // Créer le bénéficiaire avec la devise
         await this.prisma.beneficiary.create({
           data: {
             id: crypto.randomUUID(),
             userId: userId,
             accountNumber: accountNumber,
+            currency: currency || 'XAF',  // ✅ Ajout de la devise
             accountName: accountName,
             bankName: bankName || null,
             phone: phone || null,
             email: email || null,
             nickname: nickname || accountName,
-            currency: currency,
             isFavorite: false,
           },
         });
@@ -132,11 +132,11 @@ export class TransactionServiceService {
             },
           },
           data: {
+            currency: currency || existingBeneficiary.currency || '',  // ✅ Mise à jour de la devise
             accountName: accountName,
             bankName: bankName || existingBeneficiary.bankName,
             phone: phone || existingBeneficiary.phone,
             email: email || existingBeneficiary.email,
-            currency: currency,
             updatedAt: new Date(),
           },
         });
@@ -484,7 +484,7 @@ export class TransactionServiceService {
           await this.saveBeneficiary(
             data.initiatedBy,
             receiverAccountNumber,
-            receiverCurrency || '',
+            senderAccount.currency || 'XAF', // ✅ Devise du compte expéditeur
             receiverName,
             receiverBankName,
             receiverPhone || undefined,
