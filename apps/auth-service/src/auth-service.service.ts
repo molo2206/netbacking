@@ -1060,16 +1060,16 @@ export class AuthServiceService {
     ipAddress?: string,
     lang: string = 'fr',
   ) {
-    const isEmail = identifier.includes('@');
     const cleanIdentifier = identifier.trim();
 
     let user;
     let identifierToStore: string;
+    let isEmail = cleanIdentifier.includes('@');
 
+    // ✅ 1. RECHERCHER L'UTILISATEUR PAR EMAIL, PHONE OU CLIENT ID
     if (isEmail) {
-      identifierToStore = cleanIdentifier.toLowerCase();
       user = await this.prisma.user.findFirst({
-        where: { email: identifierToStore },
+        where: { email: cleanIdentifier.toLowerCase() },
       });
       if (!user)
         throw new BadRequestException(
@@ -1079,17 +1079,20 @@ export class AuthServiceService {
         throw new BadRequestException(
           this.i18nService.translate('no_email', lang),
         );
+      identifierToStore = user.email;
     } else {
       // Normaliser le téléphone
       const normalizedPhone = this.normalizePhone(cleanIdentifier);
 
-      // Rechercher l'utilisateur avec différents formats
+      // ✅ Rechercher l'utilisateur par phone ou clientId
       user = await this.prisma.user.findFirst({
         where: {
           OR: [
             { phone: normalizedPhone },
             { phone: normalizedPhone.replace('+', '') },
-            { phone: '+' + normalizedPhone.replace('+', '') }
+            { phone: '+' + normalizedPhone.replace('+', '') },
+            { clientId: cleanIdentifier }, // ✅ AJOUT : recherche par clientId
+            { clientId: normalizedPhone }, // ✅ AJOUT : clientId sans le +
           ]
         },
       });
@@ -1195,19 +1198,30 @@ export class AuthServiceService {
         this.i18nService.translate('password_too_short', lang),
       );
     }
-    // ✅ RECHERCHE DIRECTE - SANS NORMALISATION
-    let user = await this.prisma.user.findFirst({
-      where: {
-        phone: '+243973760641',
-      },
-    });
 
-    console.log('TEST USER:', user);
+    const isEmail = cleanIdentifier.includes('@');
 
-    // Si pas trouvé, essayer par clientId
-    if (!user) {
+    let user: any;
+
+    // ✅ RECHERCHE PAR EMAIL, PHONE OU CLIENT ID
+    if (isEmail) {
       user = await this.prisma.user.findFirst({
-        where: { clientId: cleanIdentifier },
+        where: { email: cleanIdentifier.toLowerCase() },
+      });
+    } else {
+      const normalizedPhone = this.normalizePhone(cleanIdentifier);
+
+      user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone: normalizedPhone },
+            { phone: normalizedPhone.replace('+', '') },
+            { phone: '+' + normalizedPhone.replace('+', '') },
+            { clientId: cleanIdentifier },        // ✅ clientId exact
+            { clientId: normalizedPhone },         // ✅ clientId sans le +
+            { clientId: normalizedPhone.replace('+', '') }, // ✅ clientId sans le +
+          ]
+        },
       });
     }
 
@@ -1215,6 +1229,7 @@ export class AuthServiceService {
     if (user) {
       console.log('🔍 [resetPassword] user.id:', user.id);
       console.log('🔍 [resetPassword] user.phone:', user.phone);
+      console.log('🔍 [resetPassword] user.clientId:', user.clientId);
     }
 
     if (!user) {
@@ -1248,14 +1263,12 @@ export class AuthServiceService {
       );
     }
 
-    // Mettre à jour le mot de passe
     const hashedPassword = await bcrypt.hash(password, 10);
     await this.prisma.user.update({
       where: { id: user.id },
       data: { password: hashedPassword },
     });
 
-    // Marquer l'OTP comme utilisé
     await this.prisma.otp.update({
       where: { id: otpEntry.id },
       data: { isUsed: true },
