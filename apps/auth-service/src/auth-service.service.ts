@@ -1091,8 +1091,8 @@ export class AuthServiceService {
             { phone: normalizedPhone },
             { phone: normalizedPhone.replace('+', '') },
             { phone: '+' + normalizedPhone.replace('+', '') },
-            { clientId: cleanIdentifier }, // ✅ AJOUT : recherche par clientId
-            { clientId: normalizedPhone }, // ✅ AJOUT : clientId sans le +
+            { clientId: cleanIdentifier },
+            { clientId: normalizedPhone },
           ]
         },
       });
@@ -1178,7 +1178,11 @@ export class AuthServiceService {
       ipAddress ?? null,
     );
 
-    return { message: this.i18nService.translate('otp_sent', lang) };
+    // ✅ RETOUR AVEC data = phone DIRECTEMENT
+    return {
+      message: this.i18nService.translate('otp_sent', lang),
+      data: user.phone  // data: "+243973760641"
+    };
   }
   // ==================== RESET PASSWORD ====================
   async resetPassword(resetPasswordDto: {
