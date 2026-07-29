@@ -600,7 +600,7 @@ export class TransactionServiceService {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
         data: {
-          transferId: completedTransfer.id,
+          transactionId: completedTransfer.transaction?.[0]?.id || null, // ← UNIQUEMENT l'ID de la transaction
           reference: completedTransfer.reference,
           senderAccountId: completedTransfer.senderAccountId,
           receiverAccountId: completedTransfer.receiverAccountId,
