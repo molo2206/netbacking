@@ -11,8 +11,8 @@ interface SmsResponse {
 
 @Injectable()
 export class SmsService {
-   private readonly apiId = 'API23108080245';
-  private readonly apiPassword = 'V90ae6RB3p';
+  private readonly apiId = 'API42928758643';
+  private readonly apiPassword = '@@Accesfina!2026';
   private readonly sender = 'AccesPay';
   private readonly apiUrl = 'https://api2.dream-digital.info/api/SendSMS';
 
