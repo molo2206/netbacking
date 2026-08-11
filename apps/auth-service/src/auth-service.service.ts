@@ -586,7 +586,6 @@ export class AuthServiceService {
               status: users_status.ACTIVE,
             },
           });
-          // Mettre à jour l'objet user pour la suite
           user.failedLoginAttempts = 0;
           user.lockedUntil = null;
           user.status = users_status.ACTIVE;
@@ -624,7 +623,8 @@ export class AuthServiceService {
       const isValidPassword = await bcrypt.compare(dto.password, user.password);
       if (!isValidPassword) {
         const newAttempts = (user.failedLoginAttempts || 0) + 1;
-        let lockedUntil = user.lockedUntil;
+        // ✅ Correction du type pour lockedUntil
+        let lockedUntil: Date | null = user.lockedUntil || null;
         let newStatus: users_status = user.status;
 
         if (newAttempts >= 5) {
@@ -758,7 +758,6 @@ export class AuthServiceService {
         });
       }
 
-      // ✅ Récupérer les settings de l'utilisateur
       const userSettings = await this.prisma.user_settings.findUnique({
         where: { user_id: user.id },
         select: {
@@ -771,7 +770,6 @@ export class AuthServiceService {
         },
       });
 
-      // Récupérer toutes les sessions actives
       const sessions = await this.prisma.session.findMany({
         where: {
           userId: user.id,
@@ -781,7 +779,6 @@ export class AuthServiceService {
         orderBy: { createdAt: 'desc' },
       });
 
-      // Formatage unifié des sessions
       const formattedSessions = sessions.map(session => ({
         id: session.id,
         device_info: session.userAgent,
@@ -791,7 +788,6 @@ export class AuthServiceService {
         expires_at: session.expiresAt,
       }));
 
-      // ✅ RÉPONSE UNIFIÉE
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
