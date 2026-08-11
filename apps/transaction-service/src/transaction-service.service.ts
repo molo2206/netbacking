@@ -14,6 +14,7 @@ import {
   transfers_type,
   transfers_platform,
   transactions_movement,
+  users_status,
 } from '@prisma/client';
 import * as crypto from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -261,7 +262,7 @@ export class TransactionServiceService {
         });
       }
 
-      // ✅ Vérifier si le PIN est bloqué et si le temps est écoulé
+      // Vérifier si le PIN est bloqué et si le temps est écoulé
       if (user.pinLockedUntil) {
         const now = new Date();
         if (now < user.pinLockedUntil) {
@@ -272,19 +273,18 @@ export class TransactionServiceService {
             statusCode: 403,
           });
         } else {
-          // ✅ Le temps est écoulé, débloquer automatiquement et remettre le statut ACTIVE
+          // Le temps est écoulé, débloquer automatiquement
           await this.prisma.user.update({
             where: { id: data.initiatedBy },
             data: {
               failedPinAttempts: 0,
               pinLockedUntil: null,
-              status: 'ACTIVE',
+              status: users_status.ACTIVE,
             },
           });
-          // Mettre à jour l'objet user pour la suite
           user.failedPinAttempts = 0;
           user.pinLockedUntil = null;
-          user.status = 'ACTIVE';
+          user.status = users_status.ACTIVE;
         }
       }
 
@@ -293,11 +293,11 @@ export class TransactionServiceService {
       if (!isPinValid) {
         const newAttempts = (user.failedPinAttempts || 0) + 1;
         let pinLockedUntil: Date | null = null;
-        let newStatus: string = user.status || 'ACTIVE';
+        let newStatus: users_status = user.status || users_status.ACTIVE;
 
         if (newAttempts >= 3) {
           pinLockedUntil = new Date(Date.now() + 15 * 60000);
-          newStatus = 'LOCKED';
+          newStatus = users_status.LOCKED;
         }
 
         await this.prisma.user.update({
@@ -323,7 +323,7 @@ export class TransactionServiceService {
           data: {
             failedPinAttempts: 0,
             pinLockedUntil: null,
-            status: 'ACTIVE',
+            status: users_status.ACTIVE,
           },
         });
       }
@@ -571,7 +571,7 @@ export class TransactionServiceService {
         });
       }
 
-      // ✅ Récupérer l'ID de la transaction DEBIT (celle de l'expéditeur)
+      // Récupérer l'ID de la transaction DEBIT
       const senderTransaction = completedTransfer.transaction?.find(
         (t) => t.accountId === senderAccount.id && t.movement === 'DEBIT'
       );
