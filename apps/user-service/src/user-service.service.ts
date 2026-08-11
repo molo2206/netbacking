@@ -1594,6 +1594,398 @@ export class UserServiceService {
     };
   }
 
+  // apps/transaction-service/src/transaction-service.service.ts
+
+  async getCheckbooksByAccount(data: {
+    accountNumber: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // 1. Récupérer le compte
+      const account = await this.prisma.account.findUnique({
+        where: { accountNumber: data.accountNumber },
+        select: {
+          id: true,
+          accountNumber: true,
+          balance: true,
+          currency: true
+        },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // 2. Récupérer les chéquiers sans les chèques
+      const checkbooks = await this.prisma.checkbooks.findMany({
+        where: { accountId: account.id },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          accountId: true,
+          checkNumberStart: true,
+          checkNumberEnd: true,
+          totalChecks: true,
+          usedChecks: true,
+          remainingChecks: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      return {
+        success: true,
+        message: this.i18nService.translate('checkbooks_retrieved', lang),
+        data: {
+          accountNumber: account.accountNumber,
+          balance: account.balance,
+          currency: account.currency,
+          checkbooks: checkbooks,
+        },
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Get Checkbooks By Account] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('checkbooks_retrieve_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // apps/user-service/src/user-service.service.ts
+
+  async requestCheckbook(data: {
+    accountNumber: string;
+    pickUpBranch: string;
+    numberOfCheckbookLeaves: number;
+    numberofcheckbooks?: number;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      // 1. Vérifier le compte
+      const account = await this.prisma.account.findUnique({
+        where: { accountNumber: data.accountNumber },
+      });
+
+      if (!account) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (account.status !== 'ACTIVE') {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('account_inactive', lang),
+          statusCode: 403,
+        });
+      }
+
+      // 2. Vérifier les champs obligatoires
+      if (!data.pickUpBranch) {
+        throw new RpcException({
+          status: 'error',
+          message: 'L\'agence de retrait est requise',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.numberOfCheckbookLeaves || data.numberOfCheckbookLeaves < 1) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Le nombre de feuillets doit être supérieur à 0',
+          statusCode: 400,
+        });
+      }
+
+      const numberofcheckbooks = data.numberofcheckbooks || 1;
+
+      if (numberofcheckbooks < 1) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Le nombre de chéquiers doit être supérieur à 0',
+          statusCode: 400,
+        });
+      }
+
+      const createdCheckbooks: any[] = [];
+
+      for (let cb = 0; cb < numberofcheckbooks; cb++) {
+        const lastCheckbook = await this.prisma.checkbooks.findFirst({
+          where: { accountId: account.id },
+          orderBy: { checkNumberEnd: 'desc' },
+        });
+
+        const start = lastCheckbook ? lastCheckbook.checkNumberEnd + 1 : 1;
+        const end = start + data.numberOfCheckbookLeaves - 1;
+        const totalChecks = data.numberOfCheckbookLeaves;
+
+        // ✅ Correction: utiliser seulement 'ACTIVE'
+        const existingCheckbook = await this.prisma.checkbooks.findFirst({
+          where: {
+            accountId: account.id,
+            OR: [
+              {
+                AND: [
+                  { checkNumberStart: { lte: end } },
+                  { checkNumberEnd: { gte: start } },
+                ],
+              },
+            ],
+            status: 'ACTIVE', // ✅ Supprimer 'REQUESTED'
+          },
+        });
+
+        if (existingCheckbook) {
+          throw new RpcException({
+            status: 'error',
+            message: `Des numéros de chèque sont déjà utilisés (${existingCheckbook.checkNumberStart} - ${existingCheckbook.checkNumberEnd})`,
+            statusCode: 400,
+          });
+        }
+
+        const checks: any[] = [];
+        for (let i = start; i <= end; i++) {
+          checks.push({
+            checkNumber: i,
+            amount: null,
+            beneficiary: null,
+            issueDate: null,
+            dueDate: null,
+            description: null,
+            status: 'PENDING',
+            usedAt: null,
+          });
+        }
+
+        // ✅ Correction: utiliser 'ACTIVE' au lieu de 'REQUESTED'
+        const checkbook = await this.prisma.checkbooks.create({
+          data: {
+            id: crypto.randomUUID(),
+            accountId: account.id,
+            checkNumberStart: start,
+            checkNumberEnd: end,
+            totalChecks: totalChecks,
+            usedChecks: 0,
+            remainingChecks: totalChecks,
+            status: 'ACTIVE', // ✅ Remplacer 'REQUESTED' par 'ACTIVE'
+            checks: JSON.stringify(checks),
+            pickUpBranch: data.pickUpBranch,
+            numberOfCheckbookLeaves: data.numberOfCheckbookLeaves,
+          },
+        });
+
+        createdCheckbooks.push({
+          id: checkbook.id,
+          checkNumberStart: checkbook.checkNumberStart,
+          checkNumberEnd: checkbook.checkNumberEnd,
+          numberOfCheckbookLeaves: checkbook.numberOfCheckbookLeaves,
+          status: checkbook.status,
+          createdAt: checkbook.createdAt,
+        });
+      }
+
+      return {
+        success: true,
+        message: `${numberofcheckbooks} chéquier(s) demandé(s) avec succès`,
+        data: {
+          accountNumber: account.accountNumber,
+          pickUpBranch: data.pickUpBranch,
+          numberOfCheckbookLeaves: data.numberOfCheckbookLeaves,
+          numberofcheckbooks: numberofcheckbooks,
+          checkbooks: createdCheckbooks,
+        },
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Request Checkbook] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('checkbook_request_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+  // 2. Voir le statut d'un chéquier
+  async getCheckbookStatus(data: {
+    checkbookId: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      const checkbook = await this.prisma.checkbooks.findUnique({
+        where: { id: data.checkbookId },
+      });
+
+      if (!checkbook) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('checkbook_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      // Parser les chèques pour les statistiques
+      const checks = checkbook.checks ? JSON.parse(checkbook.checks as string) : [];
+      const pendingChecks = checks.filter((c: any) => c.status === 'PENDING').length;
+      const usedChecks = checks.filter((c: any) => c.status === 'USED').length;
+      const cancelledChecks = checks.filter((c: any) => c.status === 'CANCELLED').length;
+
+      // Récupérer le compte
+      const account = await this.prisma.account.findUnique({
+        where: { id: checkbook.accountId },
+        select: { accountNumber: true, clientId: true },
+      });
+
+      const usagePercentage = checkbook.totalChecks > 0
+        ? Math.round((checkbook.usedChecks / checkbook.totalChecks) * 100)
+        : 0;
+
+      // Déterminer le statut global
+      let globalStatus = checkbook.status;
+      if (checkbook.status === 'ACTIVE' && checkbook.remainingChecks === 0) {
+        globalStatus = 'COMPLETED';
+      }
+
+      return {
+        success: true,
+        message: this.i18nService.translate('checkbook_status_retrieved', lang),
+        data: {
+          id: checkbook.id,
+          accountNumber: account?.accountNumber,
+          checkNumberStart: checkbook.checkNumberStart,
+          checkNumberEnd: checkbook.checkNumberEnd,
+          totalChecks: checkbook.totalChecks,
+          usedChecks: checkbook.usedChecks,
+          remainingChecks: checkbook.remainingChecks,
+          status: globalStatus,
+          usagePercentage,
+          summary: {
+            pending: pendingChecks,
+            used: usedChecks,
+            cancelled: cancelledChecks,
+          },
+          createdAt: checkbook.createdAt,
+          updatedAt: checkbook.updatedAt,
+        },
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Get Checkbook Status] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('checkbook_status_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
+
+  // 3. Bloquer un chéquier
+  async blockCheckbook(data: {
+    checkbookId: string;
+    reason?: string;
+    lang?: string;
+  }) {
+    const lang = data.lang || 'fr';
+
+    try {
+      const checkbook = await this.prisma.checkbooks.findUnique({
+        where: { id: data.checkbookId },
+      });
+
+      if (!checkbook) {
+        throw new RpcException({
+          status: 'error',
+          message: this.i18nService.translate('checkbook_not_found', lang),
+          statusCode: 404,
+        });
+      }
+
+      if (checkbook.status === 'CANCELLED') {
+        throw new RpcException({
+          status: 'error',
+          message: 'Ce chéquier est déjà annulé',
+          statusCode: 400,
+        });
+      }
+
+      if (checkbook.status === 'COMPLETED') {
+        throw new RpcException({
+          status: 'error',
+          message: 'Ce chéquier est déjà complété',
+          statusCode: 400,
+        });
+      }
+
+      // Bloquer le chéquier
+      const updatedCheckbook = await this.prisma.checkbooks.update({
+        where: { id: data.checkbookId },
+        data: {
+          status: 'CANCELLED',
+          updatedAt: new Date(),
+        },
+      });
+
+      // Annuler tous les chèques en attente
+      if (updatedCheckbook.checks) {
+        let checks = JSON.parse(updatedCheckbook.checks as string);
+        checks = checks.map((c: any) => {
+          if (c.status === 'PENDING') {
+            return { ...c, status: 'CANCELLED' };
+          }
+          return c;
+        });
+        await this.prisma.checkbooks.update({
+          where: { id: data.checkbookId },
+          data: { checks: JSON.stringify(checks) },
+        });
+      }
+
+      // ✅ Audit log - 4 arguments seulement
+      await this.logAudit(
+        checkbook.accountId,    // userId
+        'BLOCK_CHECKBOOK',      // action
+        {                       // details
+          checkbookId: data.checkbookId,
+          reason: data.reason || 'No reason provided',
+        },
+        'CHECKBOOK'             // entity
+        // ❌ Supprimé: data.checkbookId (5ème argument)
+      );
+
+      return {
+        success: true,
+        message: this.i18nService.translate('checkbook_blocked', lang),
+        data: {
+          id: updatedCheckbook.id,
+          status: updatedCheckbook.status,
+          updatedAt: updatedCheckbook.updatedAt,
+        },
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[Block Checkbook] Error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || this.i18nService.translate('checkbook_block_failed', lang),
+        statusCode: 500,
+      });
+    }
+  }
   // ========================= LIST ALL CLIENTS =========================
   async listAllClients(params: {
     page: number;

@@ -863,7 +863,6 @@ export class ApiGatewayController {
   }
 
   // ---- Paramètres utilisateur ----
-
   @Get('users/me/settings')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async getMySettings(@CurrentUser() currentUser: any) {
@@ -2076,6 +2075,126 @@ export class ApiGatewayController {
       },
       'Beneficiary not found',
       HttpStatus.NOT_FOUND,
+    );
+  }
+
+  @Get('checkbooks/account/:accountNumber')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getCheckbooksByAccount(
+    @CurrentUser() currentUser: any,
+    @Param('accountNumber') accountNumber: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendUserMessage(
+      'getCheckbooksByAccount',
+      {
+        accountNumber,
+        lang,
+      },
+      'Failed to get checkbooks',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Post('checkbooks/request')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async requestCheckbook(
+    @CurrentUser() currentUser: any,
+    @Body() body: {
+      accountNumber: string;
+      pickUpBranch: string;
+      numberOfCheckbookLeaves: number;
+      numberofcheckbooks?: number;
+    },
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    // Vérifier les champs obligatoires
+    if (!body.accountNumber) {
+      throw new HttpException('Account number is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!body.pickUpBranch) {
+      throw new HttpException('Pick up branch is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!body.numberOfCheckbookLeaves || body.numberOfCheckbookLeaves < 1) {
+      throw new HttpException('Number of checkbook leaves must be greater than 0', HttpStatus.BAD_REQUEST);
+    }
+
+    return this.sendUserMessage(
+      'requestCheckbook',
+      {
+        accountNumber: body.accountNumber,
+        pickUpBranch: body.pickUpBranch,
+        numberOfCheckbookLeaves: body.numberOfCheckbookLeaves,
+        numberofcheckbooks: body.numberofcheckbooks || 1,
+        lang,
+      },
+      'Failed to request checkbook',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  @Get('checkbooks/:checkbookId/status')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getCheckbookStatus(
+    @CurrentUser() currentUser: any,
+    @Param('checkbookId') checkbookId: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendUserMessage(
+      'getCheckbookStatus',
+      {
+        checkbookId,
+        lang,
+      },
+      'Failed to get checkbook status',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  // 3. Bloquer un chéquier
+  @Post('checkbooks/:checkbookId/block')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async blockCheckbook(
+    @CurrentUser() currentUser: any,
+    @Param('checkbookId') checkbookId: string,
+    @Body() body: { reason?: string },
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+
+    const lang = langHeader || 'fr';
+
+    return this.sendUserMessage(
+      'blockCheckbook',
+      {
+        checkbookId,
+        reason: body.reason,
+        lang,
+      },
+      'Failed to block checkbook',
+      HttpStatus.BAD_REQUEST,
     );
   }
   // ==================== HEALTH CHECK ====================

@@ -178,6 +178,162 @@ export class UserServiceController {
     }
   }
 
+  @MessagePattern('getCheckbooksByAccount')
+  async getCheckbooksByAccount(@Payload() data: {
+    accountNumber: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.accountNumber) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account number is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.userService.getCheckbooksByAccount({
+        accountNumber: data.accountNumber,
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Chéquiers récupérés avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get checkbooks',
+        statusCode: 500,
+      });
+    }
+  }
+
+  // apps/transaction-service/src/transaction-service.controller.ts
+
+  @MessagePattern('requestCheckbook')
+  async requestCheckbook(@Payload() data: {
+    accountNumber: string;
+    pickUpBranch: string;
+    numberOfCheckbookLeaves: number;
+    numberofcheckbooks?: number;
+    lang?: string;
+  }) {
+    try {
+      if (!data.accountNumber) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Account number is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.pickUpBranch) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Pick up branch is required',
+          statusCode: 400,
+        });
+      }
+
+      if (!data.numberOfCheckbookLeaves || data.numberOfCheckbookLeaves < 1) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Number of checkbook leaves must be greater than 0',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.userService.requestCheckbook(data);
+      return {
+        success: true,
+        message: result.message || 'Demande de chéquier effectuée avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] requestCheckbook error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to request checkbook',
+        statusCode: 500,
+      });
+    }
+  }
+
+  @MessagePattern('getCheckbookStatus')
+  async getCheckbookStatus(@Payload() data: {
+    checkbookId: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.checkbookId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Checkbook ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.userService.getCheckbookStatus({
+        checkbookId: data.checkbookId,
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Statut du chéquier récupéré avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] getCheckbookStatus error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to get checkbook status',
+        statusCode: 500,
+      });
+    }
+  }
+  @MessagePattern('blockCheckbook')
+  async blockCheckbook(@Payload() data: {
+    checkbookId: string;
+    reason?: string;
+    lang?: string;
+  }) {
+    try {
+      if (!data.checkbookId) {
+        throw new RpcException({
+          status: 'error',
+          message: 'Checkbook ID is required',
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.userService.blockCheckbook({
+        checkbookId: data.checkbookId,
+        reason: data.reason,
+        lang: data.lang || 'fr',
+      });
+
+      return {
+        success: true,
+        message: result.message || 'Chéquier bloqué avec succès',
+        data: result.data,
+      };
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      console.error('[TransactionController] blockCheckbook error:', error);
+      throw new RpcException({
+        status: 'error',
+        message: error.message || 'Failed to block checkbook',
+        statusCode: 500,
+      });
+    }
+  }
   // ==================== REQUÊTES GET (lecture seule, traduction minimale) ====================
 
   @MessagePattern('get_user')
