@@ -241,6 +241,7 @@ export class TransactionServiceService {
           pinStatus: true,
           failedPinAttempts: true,
           pinLockedUntil: true,
+          status: true,
         },
       });
 
@@ -260,13 +261,31 @@ export class TransactionServiceService {
         });
       }
 
-      if (user.pinLockedUntil && new Date() < user.pinLockedUntil) {
-        const remainingTime = Math.ceil((user.pinLockedUntil.getTime() - Date.now()) / 60000);
-        throw new RpcException({
-          status: 'error',
-          message: this.i18nService.translate('pin_locked', lang, { minutes: remainingTime }),
-          statusCode: 403,
-        });
+      // ✅ Vérifier si le PIN est bloqué et si le temps est écoulé
+      if (user.pinLockedUntil) {
+        const now = new Date();
+        if (now < user.pinLockedUntil) {
+          const remainingTime = Math.ceil((user.pinLockedUntil.getTime() - now.getTime()) / 60000);
+          throw new RpcException({
+            status: 'error',
+            message: this.i18nService.translate('pin_locked', lang, { minutes: remainingTime }),
+            statusCode: 403,
+          });
+        } else {
+          // ✅ Le temps est écoulé, débloquer automatiquement et remettre le statut ACTIVE
+          await this.prisma.user.update({
+            where: { id: data.initiatedBy },
+            data: {
+              failedPinAttempts: 0,
+              pinLockedUntil: null,
+              status: 'ACTIVE',
+            },
+          });
+          // Mettre à jour l'objet user pour la suite
+          user.failedPinAttempts = 0;
+          user.pinLockedUntil = null;
+          user.status = 'ACTIVE';
+        }
       }
 
       const isPinValid = user.pin ? this.verifyPin(data.pin, user.pin) : false;
@@ -274,9 +293,11 @@ export class TransactionServiceService {
       if (!isPinValid) {
         const newAttempts = (user.failedPinAttempts || 0) + 1;
         let pinLockedUntil: Date | null = null;
+        let newStatus: string = user.status || 'ACTIVE';
 
         if (newAttempts >= 3) {
           pinLockedUntil = new Date(Date.now() + 15 * 60000);
+          newStatus = 'LOCKED';
         }
 
         await this.prisma.user.update({
@@ -284,6 +305,7 @@ export class TransactionServiceService {
           data: {
             failedPinAttempts: newAttempts,
             pinLockedUntil: pinLockedUntil,
+            status: newStatus,
           },
         });
 
@@ -294,12 +316,14 @@ export class TransactionServiceService {
         });
       }
 
+      // Réinitialiser les tentatives échouées si le PIN est valide
       if (user.failedPinAttempts && user.failedPinAttempts > 0) {
         await this.prisma.user.update({
           where: { id: data.initiatedBy },
           data: {
             failedPinAttempts: 0,
             pinLockedUntil: null,
+            status: 'ACTIVE',
           },
         });
       }
@@ -442,7 +466,7 @@ export class TransactionServiceService {
           },
         });
 
-        const transSend = await prisma.transaction.create({
+        await prisma.transaction.create({
           data: {
             id: crypto.randomUUID(),
             accountId: senderAccount.id,
@@ -535,7 +559,7 @@ export class TransactionServiceService {
             include: { clients: true },
           },
           senderUser: true,
-          transaction: true, // ← transactions liées au transfert
+          transaction: true,
         },
       });
 
@@ -605,7 +629,7 @@ export class TransactionServiceService {
         success: true,
         message: this.i18nService.translate('transfer_success', lang),
         data: {
-          transactionId: senderTransaction?.id || null, // ← ID de la transaction DEBIT (expéditeur)
+          transactionId: senderTransaction?.id || null,
           transferId: completedTransfer.id,
           reference: completedTransfer.reference,
           senderAccountId: completedTransfer.senderAccountId,

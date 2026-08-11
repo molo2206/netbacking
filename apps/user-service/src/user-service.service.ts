@@ -910,14 +910,31 @@ export class UserServiceService {
       });
     }
 
-    // Vérifier si le PIN est verrouillé
-    if (user.pinLockedUntil && user.pinLockedUntil.getTime() > Date.now()) {
-      const minutesLeft = Math.ceil((user.pinLockedUntil.getTime() - Date.now()) / 60000);
-      throw new RpcException({
-        status: 'error',
-        message: `PIN verrouillé pour ${minutesLeft} minutes`,
-        statusCode: 403,
-      });
+    // ✅ Vérifier si le PIN est verrouillé et si le temps est écoulé
+    if (user.pinLockedUntil) {
+      const now = new Date();
+      if (now < user.pinLockedUntil) {
+        const minutesLeft = Math.ceil((user.pinLockedUntil.getTime() - now.getTime()) / 60000);
+        throw new RpcException({
+          status: 'error',
+          message: `PIN verrouillé pour ${minutesLeft} minutes`,
+          statusCode: 400,
+        });
+      } else {
+        // ✅ Le temps est écoulé, débloquer automatiquement
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            failedPinAttempts: 0,
+            pinLockedUntil: null,
+            status: 'ACTIVE' as users_status, // ✅ Cast du type
+          },
+        });
+        // Mettre à jour l'objet user pour la suite
+        user.failedPinAttempts = 0;
+        user.pinLockedUntil = null;
+        user.status = 'ACTIVE';
+      }
     }
 
     const hashedPin = crypto.createHash('sha256').update(pin).digest('hex');
@@ -925,15 +942,20 @@ export class UserServiceService {
 
     if (!isValid) {
       const newAttempts = (user.failedPinAttempts || 0) + 1;
-      const pinLockedUntil: Date | null = newAttempts >= 5
-        ? new Date(Date.now() + 30 * 60 * 1000)
-        : null;
+      let pinLockedUntil: Date | null = null;
+      let newStatus: users_status = user.status || 'ACTIVE';
+
+      if (newAttempts >= 5) {
+        pinLockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+        newStatus = 'LOCKED' as users_status; // ✅ Cast du type
+      }
 
       await this.prisma.user.update({
         where: { id: userId },
         data: {
           failedPinAttempts: newAttempts,
           pinLockedUntil: pinLockedUntil,
+          status: newStatus,
         },
       });
 
@@ -960,6 +982,7 @@ export class UserServiceService {
       data: {
         failedPinAttempts: 0,
         pinLockedUntil: null,
+        status: 'ACTIVE' as users_status, // ✅ Cast du type
       },
     });
 
@@ -978,7 +1001,6 @@ export class UserServiceService {
       message: this.i18nService.translate('pin_valid', lang),
     };
   }
-
   // ========================= CHANGE PIN =========================
   async changePin(
     userId: string,

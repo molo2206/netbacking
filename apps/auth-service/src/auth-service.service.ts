@@ -562,19 +562,35 @@ export class AuthServiceService {
         });
       }
 
-      if (user.lockedUntil && user.lockedUntil > new Date()) {
-        const minutesLeft = Math.ceil(
-          (user.lockedUntil.getTime() - Date.now()) / 60000,
-        );
-        let message = this.i18nService.translate('account_locked', lang);
-        message = message.replace('{minutes}', minutesLeft.toString());
-        await this.logFailedLoginAttempt(
-          user.id,
-          identifier,
-          ipAddress || null,
-          dto.userAgent || null,
-        );
-        throw new RpcException({ status: 'error', message, statusCode: 403 });
+      // ✅ Vérifier si le compte est bloqué et si le temps est écoulé
+      if (user.lockedUntil) {
+        const now = new Date();
+        if (now < user.lockedUntil) {
+          const minutesLeft = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60000);
+          let message = this.i18nService.translate('account_locked', lang);
+          message = message.replace('{minutes}', minutesLeft.toString());
+          await this.logFailedLoginAttempt(
+            user.id,
+            identifier,
+            ipAddress || null,
+            dto.userAgent || null,
+          );
+          throw new RpcException({ status: 'error', message, statusCode: 403 });
+        } else {
+          // ✅ Le temps est écoulé, débloquer automatiquement
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+              failedLoginAttempts: 0,
+              lockedUntil: null,
+              status: users_status.ACTIVE,
+            },
+          });
+          // Mettre à jour l'objet user pour la suite
+          user.failedLoginAttempts = 0;
+          user.lockedUntil = null;
+          user.status = users_status.ACTIVE;
+        }
       }
 
       if (user.status !== users_status.ACTIVE) {
@@ -775,7 +791,7 @@ export class AuthServiceService {
         expires_at: session.expiresAt,
       }));
 
-      // ✅ RÉPONSE UNIFIÉE - MÊME FORMAT QUE REGISTER AVEC SETTINGS
+      // ✅ RÉPONSE UNIFIÉE
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -810,7 +826,6 @@ export class AuthServiceService {
             isMain: account.isMain,
             accountNumber: account.accountNumber
           })),
-          // ✅ AJOUT DES SETTINGS
           settings: {
             language: userSettings?.language || user.preferredLanguage || 'fr',
             theme: userSettings?.theme || 'system',
