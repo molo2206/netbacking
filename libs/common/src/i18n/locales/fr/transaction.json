@@ -98,5 +98,6 @@
   "balance_failed": "Échec de la récupération du solde",
   "account_access_denied": "Accès refusé à ce compte",
   "transfer_description": "Transfert à {{receiverName}}",
-  "transfer_from": "Transfert de {{senderName}}"
+  "transfer_from": "Transfert de {{senderName}}",
+  "account_not_found_with_number": "Le compte {{accountNumber}} n'existe pas"
 }

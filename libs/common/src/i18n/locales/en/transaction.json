@@ -98,5 +98,6 @@
   "balance_failed": "Failed to retrieve balance",
   "account_access_denied": "Access denied to this account",
   "transfer_description": "Transfer to {{receiverName}}",
-  "transfer_from": "Transfer from {{senderName}}"
+  "transfer_from": "Transfer from {{senderName}}",
+  "account_not_found_with_number": "Account {{accountNumber}} does not exist"
 }

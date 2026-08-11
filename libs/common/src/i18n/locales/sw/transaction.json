@@ -98,5 +98,6 @@
   "balance_failed": "Imeshindwa kupata salio",
   "account_access_denied": "Imekataliwa kupata akaunti hii",
   "transfer_description": "Uhamisho kwa {{receiverName}}",
-  "transfer_from": "Uhamisho kutoka {{senderName}}"
+  "transfer_from": "Uhamisho kutoka {{senderName}}",
+  "account_not_found_with_number": "Akaunti {{accountNumber}} haipo"
 }

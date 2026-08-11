@@ -1784,7 +1784,9 @@ export class UserServiceService {
     if (!account) {
       throw new RpcException({
         status: 'error',
-        message: this.i18nService.translate('account_not_found', lang),
+        message: this.i18nService.translate('account_not_found_with_number', lang, {
+          accountNumber: accountNumber
+        }),
         statusCode: 404,
       });
     }
@@ -1809,7 +1811,6 @@ export class UserServiceService {
       },
     });
 
-    // ✅ RÉPONSE SIMPLIFIÉE
     return {
       message: this.i18nService.translate('account_retrieved', lang),
       data: {
