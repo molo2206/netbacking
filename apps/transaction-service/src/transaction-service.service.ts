@@ -1083,6 +1083,7 @@ export class TransactionServiceService {
           accountType: transaction.account.accountType,
           currency: transaction.account.currency,
           status: transaction.account.status,
+          accountNumber: transaction.account.accountNumber,
           client: transaction.account.clients ? {
             id: transaction.account.clients.id,
             clientId: transaction.account.clients.clientId,
@@ -1114,6 +1115,7 @@ export class TransactionServiceService {
             accountType: transaction.transfer.senderAccount.accountType,
             currency: transaction.transfer.senderAccount.currency,
             status: transaction.transfer.senderAccount.status,
+            accountNumber: transaction.transfer.senderAccount.accountNumber,
             client: transaction.transfer.senderAccount.clients ? {
               id: transaction.transfer.senderAccount.clients.id,
               clientId: transaction.transfer.senderAccount.clients.clientId,
@@ -1129,6 +1131,7 @@ export class TransactionServiceService {
             accountType: transaction.transfer.receiverAccount.accountType,
             currency: transaction.transfer.receiverAccount.currency,
             status: transaction.transfer.receiverAccount.status,
+            accountNumber: transaction.transfer.receiverAccount.accountNumber,
             client: transaction.transfer.receiverAccount.clients ? {
               id: transaction.transfer.receiverAccount.clients.id,
               clientId: transaction.transfer.receiverAccount.clients.clientId,
