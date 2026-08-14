@@ -1027,8 +1027,6 @@ export class TransactionServiceService {
   }
 
   // ========================= RÉCUPÉRATION DES TRANSACTIONS =========================
-  // apps/transaction-service/src/transaction-service.service.ts
-
   async getTransactionById(id: string, lang: string = 'fr') {
     const transaction = await this.prisma.transaction.findUnique({
       where: { id },
@@ -1081,7 +1079,7 @@ export class TransactionServiceService {
         createdAt: transaction.createdAt,
         account: transaction.account ? {
           id: transaction.account.id,
-          accountNumber: transaction.account.accountNumber, // ✅ Ajout de accountNumber
+          accountNumber: transaction.account.accountNumber, // ✅ Ici ça devrait fonctionner
           clientId: transaction.account.clientId,
           accountType: transaction.account.accountType,
           currency: transaction.account.currency,
@@ -1113,7 +1111,7 @@ export class TransactionServiceService {
           completedAt: transaction.transfer.completedAt,
           senderAccount: transaction.transfer.senderAccount ? {
             id: transaction.transfer.senderAccount.id,
-            accountNumber: transaction.transfer.senderAccount.accountNumber, // ✅ Ajout de accountNumber
+            accountNumber: transaction.transfer.senderAccount.accountNumber, // ✅ Ici aussi
             clientId: transaction.transfer.senderAccount.clientId,
             accountType: transaction.transfer.senderAccount.accountType,
             currency: transaction.transfer.senderAccount.currency,
@@ -1129,7 +1127,7 @@ export class TransactionServiceService {
           } : null,
           receiverAccount: transaction.transfer.receiverAccount ? {
             id: transaction.transfer.receiverAccount.id,
-            accountNumber: transaction.transfer.receiverAccount.accountNumber, // ✅ Ajout de accountNumber
+            accountNumber: transaction.transfer.receiverAccount.accountNumber, // ✅ Ici aussi
             clientId: transaction.transfer.receiverAccount.clientId,
             accountType: transaction.transfer.receiverAccount.accountType,
             currency: transaction.transfer.receiverAccount.currency,
@@ -1147,6 +1145,7 @@ export class TransactionServiceService {
       },
     };
   }
+
   async getTransactionsByAccount(accountNumber: string, params?: {
     page?: number;
     limit?: number;
