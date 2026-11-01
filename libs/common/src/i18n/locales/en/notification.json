@@ -1,0 +1,27 @@
+{
+  "notifications.wallet_credited.title": "Credit received",
+  "notifications.wallet_credited.body": "{{amount}} {{currency}} added to your account",
+  "notifications.wallet_debited.title": "Debit processed",
+  "notifications.wallet_debited.body": "{{amount}} {{currency}} withdrawn from your account",
+  "notifications.transfer_sent.title": "Transfer sent",
+  "notifications.transfer_sent.body": "You sent {{amount}} {{currency}} to {{toName}}",
+  "notifications.transfer_received.title": "Transfer received",
+  "notifications.transfer_received.body": "You received {{amount}} {{currency}} from {{fromName}}",
+  "notifications.payment_sent.title": "Payment made",
+  "notifications.payment_sent.body": "You paid {{amount}} {{currency}} to {{merchantName}}",
+  "notifications.payment_received.title": "Payment received",
+  "notifications.payment_received.body": "You received {{amount}} {{currency}} from {{customerName}}",
+  "notifications.top_up_success.title": "Top-up successful",
+  "notifications.top_up_success.body": "Your wallet has been topped up with {{amount}} {{currency}}",
+  "notifications.cashout_success.title": "Cashout successful",
+  "notifications.cashout_success.body": "Withdrawal of {{amount}} {{currency}} made to your bank account",
+  "notifications.default.title": "Notification",
+  "notifications.default.body": "",
+
+  "notifications.transaction.title": "Transaction",
+  "notifications.transaction.body": "{{amount}} {{currency}} transaction",
+  "notifications.transfer.title": "Transfer",
+  "notifications.transfer.body": "{{amount}} {{currency}} transfer",
+  "notifications.payment.title": "Payment",
+  "notifications.payment.body": "{{amount}} {{currency}} payment"
+}

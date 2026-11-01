@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Invitation à rejoindre AfiaGap</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 30px 0;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #333;
+        background-color: #e9edf3;
+      }
+
+      .container {
+        margin: 0 auto;
+        width: 100%;
+        max-width: 600px;
+        background-color: #fff;
+        padding: 0;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+      }
+
+      .header {
+        text-align: center;
+        padding: 30px 20px 15px;
+        border-bottom: 1px solid #eee;
+        background-color: #fff;
+      }
+
+      .logo {
+        max-width: 120px;
+        margin-bottom: 10px;
+      }
+
+      .header-title {
+        font-size: 20px;
+        color: #1c1e21;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .content {
+        padding: 20px 30px;
+        background-color: #fff;
+      }
+
+      .referral-code {
+        background: linear-gradient(
+          to right,
+          #2daec3 0%,
+          #2daec3 50%,
+          #2daec3 100%
+        );
+        margin: 20px auto;
+        width: max-content;
+        padding: 15px 25px;
+        color: #fff;
+        border-radius: 8px;
+        font-size: 28px;
+        font-weight: bold;
+        letter-spacing: 4px;
+        text-align: center;
+      }
+
+      .footer {
+        color: #aaa;
+        font-size: 0.8em;
+        line-height: 1.5;
+        font-weight: 300;
+        padding: 20px;
+        text-align: center;
+        background-color: #fff;
+      }
+
+      .email-info {
+        text-align: center;
+        font-size: 13px;
+        color: #666;
+        margin-top: 15px;
+      }
+
+      .email-info a {
+        text-decoration: none;
+        color: #2daec3;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="header">
+        <img
+          src="https://apiafiagap.afiagap.com/public/uploads/afia.png"
+          alt="Logo AfiaGap"
+          class="logo"
+        />
+        <p class="header-title">Vous avez été invité à rejoindre AfiaGap</p>
+      </div>
+
+      <div class="content">
+        <p><strong>Bonjour,</strong></p>
+        <p>
+          {{ parentName }} vous a invité à rejoindre AfiaGap. Pour vous inscrire
+          et lier votre compte à ce parrainage, utilisez le code de parrainage
+          ci-dessous :
+        </p>
+
+        <div class="referral-code">{{ referralCode }}</div>
+
+        <p style="font-size: 0.9em">
+          Merci de ne pas partager ce code avec d'autres personnes. Ce code
+          permet à {{ parentName }} de vous inviter et de suivre votre
+          parrainage.
+        </p>
+
+        <!-- Bouton centré avec le code de parrainage dans l'URL -->
+        <div style="text-align: center; margin-top: 30px">
+          <a
+            href="https://afiagap.com/auth/signup?ref={{ referralCode }}"
+            style="
+              display: inline-block;
+              padding: 12px 24px;
+              font-size: 16px;
+              color: white;
+              background-color: #2daec3;
+              border-radius: 6px;
+              text-decoration: none;
+              font-weight: 500;
+            "
+          >
+            S'inscrire maintenant avec ce code 
+          </a>
+        </div>
+      </div>
+
+      <hr style="border: none; border-top: 0.5px solid #ddd; margin: 0 30px" />
+
+      <div class="footer">
+        Merci de ne pas répondre à cet email.<br />
+        Pour en savoir plus sur AfiaGap et votre compte, visitez
+        <strong style="color: #2daec3">www.afiagap.com</strong>
+      </div>
+    </div>
+
+    <div class="email-info">
+      Cet email a été envoyé à <a href="mailto:{{ email }}">{{ email }}</a>
+    </div>
+    <div class="email-info">
+      &copy; {{ year }} AfiaGap. Tous droits réservés.
+    </div>
+  </body>
+</html>

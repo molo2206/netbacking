@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bienvenue sur AccesFinance</title>
+
+    <style>
+      body {
+        margin: 0;
+        padding: 30px 0;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #333;
+        background-color: #f4f7fc;
+      }
+
+      .container {
+        margin: 0 auto;
+        width: 100%;
+        max-width: 600px;
+        background-color: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+      }
+
+      .header {
+        text-align: center;
+        padding: 30px 20px;
+        background: linear-gradient(135deg, #233fc0 0%, #1a2f8f 100%);
+      }
+
+      .logo {
+        max-width: 130px;
+        margin-bottom: 12px;
+      }
+
+      .header-title {
+        font-size: 24px;
+        color: #ffffff;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .content {
+        padding: 30px;
+        background-color: #ffffff;
+      }
+
+      .button {
+        display: inline-block;
+        margin-top: 30px;
+        padding: 12px 24px;
+        font-size: 16px;
+        color: white;
+        background-color: #233fc0;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      .highlight {
+        background-color: #f3f4f6;
+        padding: 14px 20px;
+        border-radius: 8px;
+        display: inline-block;
+        font-weight: 500;
+        color: #111827;
+        margin: 20px 0;
+      }
+
+      .footer {
+        color: #5a6874;
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 20px;
+        text-align: center;
+        background-color: #f8fafd;
+        border-top: 1px solid #e2e8f0;
+      }
+
+      .email-info {
+        text-align: center;
+        font-size: 13px;
+        color: #666;
+        margin-top: 15px;
+      }
+
+      .email-info a {
+        text-decoration: none;
+        color: #233fc0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="header">
+        <img
+          src="https://elezardc.org/logo-default.png"
+          alt="Logo AccesFinance"
+          class="logo"
+        />
+
+        <h1 class="header-title">Bienvenue sur AccesFinance</h1>
+      </div>
+
+      <div class="content">
+        <strong style="font-size: 18px;">
+          Bonjour {{ userWithoutPassword.full_name }},
+        </strong>
+
+        <p>
+          Nous sommes ravis de vous accueillir parmi les utilisateurs de
+          <strong>AccesFinance</strong>.
+        </p>
+
+        <p>
+          Votre compte a été créé avec succès. Vous pouvez désormais accéder à
+          votre espace sécurisé pour gérer vos finances, effectuer vos
+          transactions et profiter de l'ensemble des services proposés par
+          AccesFinance.
+        </p>
+
+        <p>
+          Nous vous remercions de votre confiance et sommes heureux de vous
+          accompagner dans vos opérations financières au quotidien.
+        </p>
+
+        <div class="email-info">
+          Pour toute question ou besoin d'assistance, contactez-nous à
+          <a href="mailto:support@accesfinance.com">
+            support@accesfinance.com
+          </a>
+        </div>
+      </div>
+
+      <div class="footer">
+        Pour en savoir plus sur AccesFinance, visitez
+        <strong style="color: #233fc0;">
+          www.accesfinance.com
+        </strong>
+      </div>
+    </div>
+
+    <div class="email-info">
+      <a
+        style="color: #233fc0;"
+        href="https://accesfinance.com"
+      >
+        AccesFinance
+      </a>
+    </div>
+
+    <div class="email-info">
+      &copy; {{ year }} AccesFinance. Tous droits réservés.
+    </div>
+  </body>
+</html>

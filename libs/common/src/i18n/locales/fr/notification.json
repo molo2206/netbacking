@@ -1,0 +1,27 @@
+{
+  "notifications.wallet_credited.title": "Crédit reçu",
+  "notifications.wallet_credited.body": "{{amount}} {{currency}} ajoutés à votre compte",
+  "notifications.wallet_debited.title": "Débit effectué",
+  "notifications.wallet_debited.body": "{{amount}} {{currency}} retirés de votre compte",
+  "notifications.transfer_sent.title": "Transfert envoyé",
+  "notifications.transfer_sent.body": "Vous avez envoyé {{amount}} {{currency}} à {{toName}}",
+  "notifications.transfer_received.title": "Transfert reçu",
+  "notifications.transfer_received.body": "Vous avez reçu {{amount}} {{currency}} de {{fromName}}",
+  "notifications.payment_sent.title": "Paiement effectué",
+  "notifications.payment_sent.body": "Vous avez payé {{amount}} {{currency}} à {{merchantName}}",
+  "notifications.payment_received.title": "Paiement reçu",
+  "notifications.payment_received.body": "Vous avez reçu {{amount}} {{currency}} de {{customerName}}",
+  "notifications.top_up_success.title": "Rechargement réussi",
+  "notifications.top_up_success.body": "Votre portefeuille a été rechargé de {{amount}} {{currency}}",
+  "notifications.cashout_success.title": "Retrait réussi",
+  "notifications.cashout_success.body": "Retrait de {{amount}} {{currency}} effectué vers votre compte bancaire",
+  "notifications.default.title": "Notification",
+  "notifications.default.body": "",
+
+  "notifications.transaction.title": "Transaction",
+  "notifications.transaction.body": "Transaction de {{amount}} {{currency}}",
+  "notifications.transfer.title": "Virement",
+  "notifications.transfer.body": "Virement de {{amount}} {{currency}}",
+  "notifications.payment.title": "Paiement",
+  "notifications.payment.body": "Paiement de {{amount}} {{currency}}"
+}
