@@ -25,6 +25,8 @@ import { MailService } from './email/email.service';
 import { BankService } from 'apps/transaction-service/src/bank/bank.service';
 import {
   extractBankObject,
+  hasBankClientIdentity,
+  normalizePlatform,
   generateUnusablePassword,
   mapBankAccounts,
   normalizePhoneToInternational,
@@ -247,7 +249,8 @@ export class AuthServiceService {
         );
       }
 
-      if (!clientDetails || !clientDetails.clientId) {
+      // ✅ Client inconnu : la banque renvoie le clientId avec tous les champs à null
+      if (!hasBankClientIdentity(clientDetails)) {
         throw new BadRequestException(
           this.i18nService.translate('client_id_not_found', lang),
         );
@@ -354,6 +357,7 @@ export class AuthServiceService {
               this.i18nService.translate('email_otp_title', lang),
               'otp-email.html',
               {
+                lang,
                 title: this.i18nService.translate('email_otp_title', lang),
                 greeting: this.i18nService.translate('email_otp_greeting', lang),
                 message: this.i18nService.translate('email_otp_message', lang),
@@ -421,7 +425,11 @@ export class AuthServiceService {
         role: UserRole.USER,
         status: users_status.PENDING_VERIFICATION,
         clientId,
-        platform: data.platform || 'WEB',
+        // ✅ Plateforme d'inscription harmonisée : MOBILE ou WEB
+        platform: (() => {
+          const p = normalizePlatform(data.platform, data.deviceInfo);
+          return p === 'UNKNOWN' ? 'WEB' : p;
+        })(),
         isPhoneVerified: true,
         mustChangePassword: false,
         tempPasswordExpiresAt: null,
@@ -510,7 +518,9 @@ export class AuthServiceService {
             update: {
               userId: user.id,
               deviceName: data.deviceInfo || 'unknown',
-              deviceType: data.platform || 'WEB',
+              deviceType: normalizePlatform(data.platform, data.deviceInfo),
+              pushToken: data.fcmToken,
+              isActive: true,
               updatedAt: new Date(),
             },
             create: {
@@ -518,7 +528,9 @@ export class AuthServiceService {
               userId: user.id,
               deviceId: data.fcmToken,
               deviceName: data.deviceInfo || 'unknown',
-              deviceType: data.platform || 'WEB',
+              deviceType: normalizePlatform(data.platform, data.deviceInfo),
+              pushToken: data.fcmToken,
+              isActive: true,
               createdAt: new Date(),
               updatedAt: new Date(),
             },
@@ -588,6 +600,8 @@ export class AuthServiceService {
   ) {
     const lang = dto.lang || 'fr';
     const identifier = dto.identifier;
+    // ✅ Plateforme de connexion (MOBILE / WEB) — statistiques admin
+    const loginPlatform = normalizePlatform(dto.platform, dto.userAgent || dto.deviceInfo);
 
     try {
       const user = await this.prisma.user.findFirst({
@@ -786,15 +800,16 @@ export class AuthServiceService {
         },
       });
 
-      await this.prisma.loginHistory.create({
+      const loginEntry = await this.prisma.loginHistory.create({
         data: {
           userId: user.id,
           ipAddress: ipAddress || 'unknown',
-          userAgent: dto.userAgent || 'unknown',
+          userAgent: dto.userAgent || dto.deviceInfo || 'unknown',
           success: true,
           deviceId: dto.fcmToken || undefined,
         },
       });
+      await this.recordPlatform('login_history', loginEntry.id, loginPlatform);
 
       const userRole = user.role || UserRole.USER;
       const tokens = this.generateJwtTokens(
@@ -840,15 +855,20 @@ export class AuthServiceService {
           createdAt: new Date(),
         },
       });
+      await this.recordPlatform('sessions', createdSession.id, loginPlatform);
 
       if (dto.fcmToken && dto.fcmToken.trim()) {
         try {
+          // ✅ Le token FCM est aussi rangé dans pushToken (lu par le service de notification)
           await this.prisma.device.upsert({
             where: { deviceId: dto.fcmToken },
             update: {
               userId: user.id,
               deviceName: dto.deviceInfo || 'unknown',
-              deviceType: dto.platform || 'unknown',
+              deviceType: loginPlatform,
+              pushToken: dto.fcmToken,
+              isActive: true,
+              lastUsedAt: new Date(),
               updatedAt: new Date(),
             },
             create: {
@@ -856,7 +876,10 @@ export class AuthServiceService {
               userId: user.id,
               deviceId: dto.fcmToken,
               deviceName: dto.deviceInfo || 'unknown',
-              deviceType: dto.platform || 'unknown',
+              deviceType: loginPlatform,
+              pushToken: dto.fcmToken,
+              isActive: true,
+              lastUsedAt: new Date(),
               createdAt: new Date(),
               updatedAt: new Date(),
             },
@@ -1266,6 +1289,7 @@ export class AuthServiceService {
           this.i18nService.translate('email_otp_title', lang),
           'otp-email.html',
           {
+            lang,
             title: this.i18nService.translate('email_otp_title', lang),
             greeting: this.i18nService.translate('email_otp_greeting', lang),
             message: this.i18nService.translate('email_otp_message', lang),
@@ -1670,23 +1694,57 @@ export class AuthServiceService {
   }
 
   // ==================== REGISTER DEVICE TOKEN ====================
-  async registerDeviceToken(userId: string, fcmToken: string) {
+  async registerDeviceToken(userId: string, fcmToken: string, platform?: string, deviceName?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('Utilisateur non trouvé');
     if (!fcmToken || !fcmToken.trim())
       throw new BadRequestException('Token FCM requis');
+    const token = fcmToken.trim();
+    const deviceType = normalizePlatform(platform || 'MOBILE');
+    // ✅ pushToken renseigné : c'est là que le service de notification lit le token
     return this.prisma.device.upsert({
-      where: { deviceId: fcmToken.trim() },
-      update: { userId: userId, updatedAt: new Date() },
+      where: { deviceId: token },
+      update: {
+        userId,
+        pushToken: token,
+        isActive: true,
+        deviceType,
+        ...(deviceName ? { deviceName } : {}),
+        lastUsedAt: new Date(),
+        updatedAt: new Date(),
+      },
       create: {
         id: crypto.randomUUID(),
-        userId: userId,
-        deviceId: fcmToken.trim(),
-        deviceType: 'unknown',
+        userId,
+        deviceId: token,
+        pushToken: token,
+        isActive: true,
+        deviceType,
+        deviceName: deviceName || null,
+        lastUsedAt: new Date(),
         createdAt: new Date(),
         updatedAt: new Date(),
       },
     });
+  }
+
+  /**
+   * Enregistre la plateforme (MOBILE / WEB) d'une session ou d'une connexion.
+   * Colonne ajoutée par prisma/sql/20261104_platform_tracking.sql : si la migration
+   * n'est pas encore appliquée, on ignore simplement (la connexion n'est pas bloquée).
+   */
+  private async recordPlatform(table: 'sessions' | 'login_history', id: string, platform: string) {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE \`${table}\` SET platform = ? WHERE id = ?`,
+        platform,
+        id,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[recordPlatform] ${table}.platform indisponible (migration 20261104 non appliquée ?) : ${err?.message || err}`,
+      );
+    }
   }
 
   // ==================== GET USER STATUS ====================
@@ -2169,4 +2227,4 @@ export class AuthServiceService {
       message,
     };
   }
-}
+}

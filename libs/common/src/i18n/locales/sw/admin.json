@@ -29,5 +29,19 @@
   "operation_amount_invalid": "Kiasi lazima kiwe zaidi ya sifuri.",
   "operation_amount_below_min": "Kiasi ni kidogo mno: kiwango cha chini kwa muamala ni {{min}} {{currency}}.",
   "operation_amount_above_max": "Kiasi ni kikubwa mno: kiwango cha juu kwa muamala ni {{max}} {{currency}}.",
-  "operation_daily_limit_exceeded": "Kikomo cha kila siku kimefikiwa: {{limit}} {{currency}} kwa siku. Kilichotumika leo: {{used}} {{currency}}. Kilichobaki: {{remaining}} {{currency}}."
+  "operation_daily_limit_exceeded": "Kikomo cha kila siku kimefikiwa: {{limit}} {{currency}} kwa siku. Kilichotumika leo: {{used}} {{currency}}. Kilichobaki: {{remaining}} {{currency}}.",
+  "admin_notification_required": "Kichwa na ujumbe wa arifa vinahitajika.",
+  "admin_notification_sent": "Arifa imetumwa kwa watumiaji {{count}}.",
+  "account_delete_super_admin": "Akaunti ya msimamizi mkuu haiwezi kufutwa kutoka kwenye programu.",
+  "account_delete_wrong_password": "Nenosiri si sahihi.",
+  "account_deleted_success": "Ufikiaji wako wa programu ya AccesFinance umefutwa. Akaunti yako ya benki haijaathirika.",
+  "admin_stats_retrieved": "Takwimu zimepatikana kikamilifu",
+  "admin_email_status": "Hali ya kutuma barua pepe",
+  "admin_email_invalid": "Anwani ya barua pepe si sahihi.",
+  "admin_email_failed": "Barua pepe haikuweza kutumwa: {{error}}",
+  "admin_email_sent": "Barua pepe ya majaribio imetumwa kwa {{to}}.",
+  "statement_invalid_dates": "Tarehe si sahihi. Tumia muundo YYYY-MM-DD.",
+  "statement_pdf_failed": "Taarifa haikuweza kutolewa. Tafadhali jaribu tena.",
+  "statement_generated": "Taarifa ya akaunti imetolewa kikamilifu",
+  "statement_email_body": "Tafadhali pata taarifa ya akaunti yako {{accountNumber}} iliyoambatishwa kwa kipindi cha {{periodStart}} hadi {{periodEnd}}."
 }

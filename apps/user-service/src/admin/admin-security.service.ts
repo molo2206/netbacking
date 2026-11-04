@@ -9,6 +9,8 @@ import { I18nService } from '../../../../libs/common/src/i18n/i18n.service';
 import { SmsService } from 'apps/auth-service/src/sms/sms.service';
 import { normalizePhoneToInternational } from '../../../../libs/common/src/utils/phone.util';
 import { UserApprovalService } from '../approval/user-approval.service';
+import { NotificationHelper } from 'apps/notification-service/src/helpers/NotificationHelper';
+import { NotificationType } from 'apps/notification-service/src/type/notification-type';
 
 /**
  * ═══════════════════════════════════════════════════════════════════
@@ -49,7 +51,18 @@ export class AdminSecurityService {
     private readonly i18nService: I18nService,
     private readonly smsService: SmsService,
     private readonly approvalService: UserApprovalService,
+    private readonly notificationHelper: NotificationHelper,
   ) {}
+
+  /** Push + historique « Sécurité » dans l'app (en plus du SMS). */
+  private async pushSecurity(target: any, event: string, lang: string) {
+    try {
+      const userLang = target?.preferredLanguage || lang;
+      await this.notificationHelper.notify(target.id, NotificationType.SECURITY, { event }, 'USER_SECURITY', target.id, userLang);
+    } catch (err) {
+      this.logger.warn(`[pushSecurity] ${event} : ${err?.message || err}`);
+    }
+  }
 
   // ─────────────────────────── utilitaires ───────────────────────────
 
@@ -240,6 +253,7 @@ export class AdminSecurityService {
     await this.audit(admin, 'ADMIN_UNLOCK_PIN', target.id, { reason: input.reason || null },
       input.ipAddress, before, this.securitySnapshot(updated));
     const smsSent = input.notify === false ? false : await this.notify(target, 'admin_pin_unlocked_sms', lang);
+    if (input.notify !== false) await this.pushSecurity(target, 'pin_unlocked', lang);
 
     return {
       message: this.i18nService.translate('admin_pin_unlocked', lang),
@@ -265,6 +279,7 @@ export class AdminSecurityService {
     await this.audit(admin, 'ADMIN_RESET_PIN', target.id, { reason: input.reason || null },
       input.ipAddress, before, this.securitySnapshot(updated));
     const smsSent = input.notify === false ? false : await this.notify(target, 'admin_pin_reset_sms', lang);
+    if (input.notify !== false) await this.pushSecurity(target, 'pin_reset', lang);
 
     return {
       message: this.i18nService.translate('admin_pin_reset', lang),
@@ -288,6 +303,7 @@ export class AdminSecurityService {
     await this.audit(admin, 'ADMIN_BLOCK_USER', target.id,
       { reason: input.reason || null, closedSessions }, input.ipAddress, before, this.securitySnapshot(updated));
     const smsSent = input.notify === false ? false : await this.notify(target, 'admin_account_blocked_sms', lang);
+    if (input.notify !== false) await this.pushSecurity(target, 'blocked', lang);
 
     return {
       message: this.i18nService.translate('admin_user_blocked', lang),
@@ -313,6 +329,7 @@ export class AdminSecurityService {
     await this.audit(admin, 'ADMIN_UNBLOCK_USER', target.id, { reason: input.reason || null },
       input.ipAddress, before, this.securitySnapshot(updated));
     const smsSent = input.notify === false ? false : await this.notify(target, 'admin_account_unblocked_sms', lang);
+    if (input.notify !== false) await this.pushSecurity(target, 'unblocked', lang);
 
     return {
       message: this.i18nService.translate('admin_user_unblocked', lang),
@@ -326,6 +343,7 @@ export class AdminSecurityService {
 
     await this.audit(admin, 'ADMIN_FORCE_LOGOUT', target.id,
       { reason: input.reason || null, closedSessions }, input.ipAddress);
+    if (input.notify !== false) await this.pushSecurity(target, 'logout_forced', lang);
 
     return {
       message: this.i18nService.translate('admin_sessions_closed', lang, { count: closedSessions }),
@@ -348,6 +366,7 @@ export class AdminSecurityService {
 
     await this.audit(admin, 'ADMIN_RESET_PASSWORD', target.id,
       { reason: input.reason || null, delivery: result?.data?.delivery }, input.ipAddress);
+    if (input.notify !== false) await this.pushSecurity(target, 'password_reset', lang);
 
     return result;
   }

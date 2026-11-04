@@ -1,94 +1,109 @@
 /* eslint-disable @typescript-eslint/no-base-to-string */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+// apps/notification-service/src/notification.service.ts
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
-import { PrismaService } from './prisma/prisma.service';
 import { RpcException } from '@nestjs/microservices';
+import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
+import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import * as crypto from 'crypto';
+import { PrismaService } from './prisma/prisma.service';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════
+ * NOTIFICATIONS — procédure standard AccesFinance
+ * ═══════════════════════════════════════════════════════════════════
+ *  1. dédoublonnage (même utilisateur + même type + même entité en cours)
+ *  2. push Firebase vers le DERNIER appareil enregistré de l'utilisateur
+ *  3. token invalide → appareil désactivé
+ *  4. enregistrement en base (historique « Notifications » de l'app)
+ *
+ * Corrections par rapport à l'ancienne version AccesFinance :
+ *  - Firebase importé de façon statique (le `require` dynamique échouait
+ *    après compilation webpack : « credential method not available »)
+ *  - le token FCM est lu dans `pushToken` OU `deviceId` (la connexion le
+ *    stockait dans `deviceId`, le service cherchait `pushToken`)
+ *  - la colonne `notifications.type` n'accepte que EMAIL/SMS/PUSH/IN_APP :
+ *    le type métier (transfer_sent…) est rangé dans `data.category`
+ * ═══════════════════════════════════════════════════════════════════
+ */
 @Injectable()
 export class NotificationService implements OnModuleInit {
   private readonly logger = new Logger(NotificationService.name);
   private readonly pendingNotifications = new Map<string, Promise<any>>();
-  private firebaseInitialized = false;
-  private admin: any = null;
+  private firebaseApp: App | null = null;
+  private messaging: Messaging | null = null;
 
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit() {
     this.initializeFirebase();
   }
 
+  // ─────────────────────────── Firebase ───────────────────────────
+
   private initializeFirebase() {
     try {
-      // Essayer d'importer firebase-admin dynamiquement
-      try {
-        this.admin = require('firebase-admin');
-      } catch (importError) {
-        this.logger.warn('⚠️ Firebase Admin package not installed. Push notifications disabled.');
-        return;
+      const existing = getApps();
+      if (existing.length > 0) {
+        this.firebaseApp = existing[0];
+      } else {
+        const projectId = process.env.FIREBASE_PROJECT_ID;
+        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+        const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+        if (!projectId || !clientEmail || !privateKey) {
+          this.logger.warn(
+            '⚠️ FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY manquants : push désactivé (les notifications restent enregistrées).',
+          );
+          return;
+        }
+        this.firebaseApp = initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
       }
-
-      // Vérifier si l'import a réussi
-      if (!this.admin) {
-        this.logger.warn('⚠️ Firebase Admin import failed. Push notifications disabled.');
-        return;
-      }
-
-      // Vérifier si Firebase est déjà initialisé
-      if (this.admin.apps && this.admin.apps.length > 0) {
-        this.firebaseInitialized = true;
-        this.logger.log('✅ Firebase Admin already initialized');
-        return;
-      }
-
-      // Vérifier les credentials
-      const projectId = process.env.FIREBASE_PROJECT_ID;
-      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-      const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-      if (!projectId || !clientEmail || !privateKey) {
-        this.logger.warn('⚠️ Firebase credentials missing. Push notifications disabled.');
-        this.logger.warn('Please set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
-        return;
-      }
-
-      // Vérifier que credential existe
-      if (!this.admin.credential || !this.admin.credential.cert) {
-        this.logger.warn('⚠️ Firebase credential method not available. Push notifications disabled.');
-        return;
-      }
-
-      // Initialiser Firebase
-      const serviceAccount = {
-        projectId,
-        clientEmail,
-        privateKey,
-      };
-
-      this.admin.initializeApp({
-        credential: this.admin.credential.cert(serviceAccount),
-      });
-
-      this.firebaseInitialized = true;
-      this.logger.log('✅ Firebase Admin initialized successfully');
+      this.messaging = getMessaging(this.firebaseApp);
+      this.logger.log('✅ Firebase Admin initialisé');
     } catch (error) {
-      this.logger.error(`❌ Failed to initialize Firebase: ${error.message}`);
-      this.firebaseInitialized = false;
+      this.firebaseApp = null;
+      this.messaging = null;
+      this.logger.error(`❌ Initialisation Firebase impossible : ${error?.message || error}`);
     }
+  }
+
+  get firebaseReady(): boolean {
+    return !!this.messaging;
   }
 
   private ensureStringValues(obj: any): Record<string, string> {
     const result: Record<string, string> = {};
     if (!obj) return result;
     for (const [key, value] of Object.entries(obj)) {
-      result[key] =
-        typeof value === 'object' ? JSON.stringify(value) : String(value);
+      if (value === undefined || value === null) continue;
+      result[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
     }
     return result;
   }
 
-  // ==================== ENVOI ====================
+  /** Un token FCM ressemble à « xxxx:APA91b… » (> 100 caractères). */
+  private looksLikeFcmToken(value?: string | null): boolean {
+    return !!value && value.length > 100 && value.includes(':');
+  }
+
+  /** Dernier token de l'utilisateur (un seul appareil, le plus récent). */
+  private async latestToken(userId: string): Promise<{ token: string; deviceRowId: string } | null> {
+    const devices = await this.prisma.device.findMany({
+      where: { userId, OR: [{ isActive: true }, { isActive: null }] },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 10,
+      select: { id: true, deviceId: true, pushToken: true },
+    });
+    for (const d of devices) {
+      const token = d.pushToken || (this.looksLikeFcmToken(d.deviceId) ? d.deviceId : null);
+      if (token) return { token, deviceRowId: d.id };
+    }
+    return null;
+  }
+
+  // ─────────────────────────── envoi ───────────────────────────
 
   async sendNotificationToUser(
     userId: string,
@@ -102,17 +117,11 @@ export class NotificationService implements OnModuleInit {
     if (entityId) dedupKey += `:${entityId}`;
 
     if (this.pendingNotifications.has(dedupKey)) {
-      this.logger.log(`⏳ [DEDUP] Attente de la notification en cours pour ${dedupKey}`);
+      this.logger.log(`⏳ [DEDUP] Notification déjà en cours pour ${dedupKey}`);
       return this.pendingNotifications.get(dedupKey);
     }
 
-    const promise = this._sendNotification(
-      userId,
-      title,
-      body,
-      type,
-      data,
-    ).finally(() => {
+    const promise = this._sendNotification(userId, title, body, type, data).finally(() => {
       setTimeout(() => this.pendingNotifications.delete(dedupKey), 2000);
     });
     this.pendingNotifications.set(dedupKey, promise);
@@ -123,106 +132,71 @@ export class NotificationService implements OnModuleInit {
     userId: string,
     title: string,
     body: string,
-    type: string,
+    category: string,
     data?: any,
   ) {
-    // 1. Récupérer les tokens FCM depuis la table Device
-    const devices = await this.prisma.device.findMany({
-      where: {
-        userId,
-        isActive: true,
-        pushToken: { not: null },
-      },
-      select: { pushToken: true },
-    });
+    const target = await this.latestToken(userId);
+    let pushStatus: 'SENT' | 'FAILED' | 'PENDING' = 'PENDING';
 
-    const tokens = devices
-      .map(d => d.pushToken)
-      .filter((token): token is string => !!token);
-
-    this.logger.log(`📱 [PUSH] User ${userId} – ${tokens.length} token(s)`);
-
-    // 2. Envoyer via Firebase (si disponible)
-    if (tokens.length > 0 && this.firebaseInitialized && this.admin) {
+    if (target && this.messaging) {
       try {
-        // Vérifier que messaging est disponible
-        if (!this.admin.messaging) {
-          this.logger.warn('⚠️ admin.messaging() not available');
-          throw new Error('admin.messaging() not available');
-        }
-
-        const stringData = data ? this.ensureStringValues(data) : {};
-        const messages = tokens.map((token) => ({
-          token,
+        await this.messaging.send({
+          token: target.token,
           notification: { title, body },
-          data: stringData,
-        }));
-
-        const response = await this.admin.messaging().sendEach(messages);
-        this.logger.log(`✅ [FCM] Envoyé: ${response.successCount || 0}/${tokens.length}`);
-
-        if (response.responses) {
-          response.responses.forEach((resp: any, idx: number) => {
-            if (
-              !resp.success &&
-              resp.error?.code === 'messaging/registration-token-not-registered'
-            ) {
-              this.logger.log(`🗑️ [FCM] Token invalide pour user ${userId}`);
-              this.prisma.device.updateMany({
-                where: { pushToken: tokens[idx] },
-                data: { isActive: false },
-              }).catch((e) => this.logger.error(e));
-            }
-          });
-        }
+          data: this.ensureStringValues({ ...(data || {}), category }),
+          android: { priority: 'high', notification: { sound: 'default' } },
+          apns: { payload: { aps: { sound: 'default' } } },
+        });
+        pushStatus = 'SENT';
+        this.logger.log(`✅ [FCM] Push envoyé à ${userId} (${category})`);
       } catch (error) {
-        this.logger.error(`❌ [FCM] Erreur d'envoi: ${error.message}`);
+        pushStatus = 'FAILED';
+        const code = error?.code || error?.errorInfo?.code;
+        this.logger.error(`❌ [FCM] ${code || ''} ${error?.message || error}`);
+        if (
+          code === 'messaging/registration-token-not-registered' ||
+          code === 'messaging/invalid-registration-token'
+        ) {
+          this.logger.log(`🗑️ [FCM] Token invalide désactivé pour ${userId}`);
+          this.prisma.device
+            .update({ where: { id: target.deviceRowId }, data: { isActive: false } })
+            .catch((e) => this.logger.error(e?.message || e));
+        }
       }
+    } else if (!target) {
+      this.logger.log(`⚠️ [PUSH] Aucun appareil enregistré pour ${userId}`);
     } else {
-      if (tokens.length === 0) {
-        this.logger.log(`⚠️ [PUSH] Aucun token pour l'utilisateur ${userId}`);
-      } else {
-        this.logger.warn(`⚠️ [PUSH] Firebase non disponible`);
-      }
+      this.logger.warn('⚠️ [PUSH] Firebase indisponible : notification enregistrée sans push');
     }
 
-    // 3. Sauvegarde en base (toujours effectuée)
+    // Sauvegarde en base (toujours) — `type` = canal, `data.category` = type métier
     const notification = await this.prisma.notification.create({
       data: {
         id: crypto.randomUUID(),
         userId,
-        type: type as any,
-        title,
-        content: body,
-        data: data ? JSON.stringify(data) : null,
-        status: tokens.length > 0 && this.firebaseInitialized ? 'SENT' : 'PENDING',
-        sentAt: tokens.length > 0 && this.firebaseInitialized ? new Date() : null,
+        type: 'PUSH',
+        title: String(title || '').slice(0, 255),
+        content: String(body || ''),
+        data: JSON.stringify({ ...(data || {}), category }),
+        status: pushStatus === 'SENT' ? 'SENT' : pushStatus === 'FAILED' ? 'FAILED' : 'PENDING',
+        sentAt: pushStatus === 'SENT' ? new Date() : null,
         createdAt: new Date(),
       },
     });
 
     this.logger.log(`💾 [DB] Notification enregistrée : ${notification.id}`);
-    return notification;
+    return this.toResponse(notification);
   }
 
-  // ==================== AUTRES MÉTHODES ====================
-
-  async sendNotification(data: {
-    userId: string;
-    title: string;
-    body: string;
-    type?: string;
-    data?: any;
-  }) {
+  async sendNotification(data: { userId: string; title: string; body: string; type?: string; data?: any }) {
     try {
       const notification = await this.sendNotificationToUser(
         data.userId,
         data.title,
         data.body,
-        data.type || 'IN_APP',
+        data.type || 'system',
         data.data,
       );
-
       return { success: true, notification };
     } catch (error) {
       this.logger.error(`❌ Send notification error: ${error.message}`);
@@ -234,25 +208,56 @@ export class NotificationService implements OnModuleInit {
     }
   }
 
-  async listUserNotifications(userId: string, page: number = 1, limit: number = 10) {
-    const skip = (page - 1) * limit;
+  // ─────────────────────────── lecture ───────────────────────────
 
-    const [notifications, total] = await Promise.all([
+  /** Format renvoyé aux apps (champs snake_case + équivalents camelCase). */
+  private toResponse(n: any) {
+    let data: any = null;
+    try {
+      data = n.data ? JSON.parse(n.data) : null;
+    } catch {
+      data = n.data;
+    }
+    const hasSeen = n.status === 'READ' || !!n.readAt;
+    return {
+      id: n.id,
+      title: n.title,
+      body: n.content,
+      type: data?.category || n.type,
+      data,
+      has_seen: hasSeen,
+      hasSeen,
+      status: n.status,
+      readAt: n.readAt,
+      created_at: n.createdAt,
+      createdAt: n.createdAt,
+    };
+  }
+
+  async listUserNotifications(userId: string, page: number = 1, limit: number = 10, onlyUnread = false) {
+    const p = Math.max(1, Number(page) || 1);
+    const l = Math.min(100, Math.max(1, Number(limit) || 10));
+    const where: any = { userId, ...(onlyUnread ? { status: { not: 'READ' } } : {}) };
+
+    const [notifications, total, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
+        skip: (p - 1) * l,
+        take: l,
       }),
-      this.prisma.notification.count({ where: { userId } }),
+      this.prisma.notification.count({ where }),
+      this.prisma.notification.count({ where: { userId, status: { not: 'READ' } } }),
     ]);
 
     return {
       message: 'Notifications retrieved',
-      data: notifications,
+      data: notifications.map((n) => this.toResponse(n)),
       total,
-      page,
-      limit,
+      unreadCount,
+      page: p,
+      limit: l,
+      totalPages: Math.ceil(total / l),
     };
   }
 
@@ -262,105 +267,54 @@ export class NotificationService implements OnModuleInit {
 
   async markNotificationAsSeen(notificationId: string, userId: string) {
     const notification = await this.prisma.notification.findFirst({
-      where: {
-        id: notificationId,
-        userId,
-      },
+      where: { id: notificationId, userId },
     });
-
     if (!notification) {
-      throw new RpcException({
-        status: 'error',
-        message: 'Notification not found',
-        statusCode: 404,
-      });
+      throw new RpcException({ status: 'error', message: 'Notification not found', statusCode: 404 });
     }
-
     const updated = await this.prisma.notification.update({
       where: { id: notificationId },
-      data: {
-        status: 'READ',
-        readAt: new Date(),
-      },
+      data: { status: 'READ', readAt: new Date() },
     });
-
-    return {
-      message: 'Notification marked as read',
-      data: updated,
-    };
+    return { message: 'Notification marked as read', data: this.toResponse(updated) };
   }
 
   async markAllNotificationsAsSeen(userId: string) {
     const result = await this.prisma.notification.updateMany({
-      where: {
-        userId,
-        status: { not: 'READ' },
-      },
-      data: {
-        status: 'READ',
-        readAt: new Date(),
-      },
+      where: { userId, status: { not: 'READ' } },
+      data: { status: 'READ', readAt: new Date() },
     });
-
-    return {
-      message: `${result.count} notification(s) marked as read`,
-      count: result.count,
-    };
+    return { message: `${result.count} notification(s) marked as read`, count: result.count };
   }
 
   async deleteNotification(notificationId: string, userId: string) {
     const notification = await this.prisma.notification.findFirst({
       where: { id: notificationId, userId },
     });
-
     if (!notification) {
-      throw new RpcException({
-        status: 'error',
-        message: 'Notification not found',
-        statusCode: 404,
-      });
+      throw new RpcException({ status: 'error', message: 'Notification not found', statusCode: 404 });
     }
-
-    await this.prisma.notification.delete({
-      where: { id: notificationId },
-    });
-
-    return {
-      success: true,
-      message: 'Notification deleted successfully',
-    };
+    await this.prisma.notification.delete({ where: { id: notificationId } });
+    return { success: true, message: 'Notification deleted successfully' };
   }
 
   async deleteAllNotifications(userId: string) {
-    const result = await this.prisma.notification.deleteMany({
-      where: { userId },
-    });
-
-    return {
-      success: true,
-      message: `${result.count} notification(s) deleted`,
-      count: result.count,
-    };
+    const result = await this.prisma.notification.deleteMany({ where: { userId } });
+    return { success: true, message: `${result.count} notification(s) deleted`, count: result.count };
   }
 
   async getUnreadCount(userId: string) {
     const count = await this.prisma.notification.count({
-      where: {
-        userId,
-        status: { not: 'READ' },
-      },
+      where: { userId, status: { not: 'READ' } },
     });
-
-    return {
-      unreadCount: count,
-    };
+    return { unreadCount: count };
   }
 
   async healthCheck() {
     return {
       status: 'ok',
       service: 'notification-service',
-      firebase: this.firebaseInitialized ? 'connected' : 'disabled',
+      firebase: this.firebaseReady ? 'connected' : 'disabled',
       timestamp: new Date().toISOString(),
     };
   }

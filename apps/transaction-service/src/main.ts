@@ -1,4 +1,6 @@
 // apps/transaction-service/src/main.ts
+// ✅ Charge le .env AVANT tout le reste (les services lisent process.env dès leur construction)
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { TransactionServiceModule } from './transaction-service.module';

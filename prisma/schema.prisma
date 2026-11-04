@@ -89,6 +89,8 @@ model Session {
   isActive     Boolean?  @default(true)
   logoutAt     DateTime? @db.DateTime(0)
   createdAt    DateTime? @default(now()) @db.DateTime(0)
+  /// MOBILE / WEB — prisma/sql/20261104_platform_tracking.sql (lu/écrit en SQL brut)
+  platform     String?   @db.VarChar(20) @ignore
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "sessions_ibfk_1")
 
   @@index([createdAt], map: "idx_sessions_createdAt")
@@ -304,6 +306,8 @@ model LoginHistory {
   success       Boolean
   failureReason String?   @db.Text
   loginAt       DateTime? @default(now()) @db.DateTime(0)
+  /// MOBILE / WEB — prisma/sql/20261104_platform_tracking.sql (lu/écrit en SQL brut)
+  platform      String?   @db.VarChar(20) @ignore
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "login_history_ibfk_1")
 
   @@index([loginAt], map: "idx_login_history_loginAt")

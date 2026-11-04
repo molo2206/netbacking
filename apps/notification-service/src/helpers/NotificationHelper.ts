@@ -1,13 +1,29 @@
 // apps/notification-service/src/helpers/NotificationHelper.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { I18nService } from '@app/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { NotificationType } from '../type/notification-type';
+import { NotificationService } from '../notification.service';
 
+/**
+ * ═══════════════════════════════════════════════════════════════════
+ * NOTIFICATION HELPER — procédure standard AccesFinance
+ * ═══════════════════════════════════════════════════════════════════
+ *   notify(userId, type, data, entity, entityId, lang)
+ *     1. titre + message traduits dans la langue de l'utilisateur
+ *     2. NotificationService : push Firebase + historique en base
+ *
+ * Envoi se fait dans le même processus
+ * (pas de passage par la file `notification_queue`), car le service de
+ * notification ne tourne pas comme un processus séparé sur le serveur.
+ * Résultat identique pour l'utilisateur, une étape réseau en moins.
+ * ═══════════════════════════════════════════════════════════════════
+ */
 @Injectable()
 export class NotificationHelper {
+  private readonly logger = new Logger(NotificationHelper.name);
+
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
     private readonly i18nService: I18nService,
   ) {}
 
@@ -19,103 +35,97 @@ export class NotificationHelper {
     entityId?: string,
     lang: string = 'fr',
   ) {
+    if (!userId) return;
     const { title, body } = this.getTranslatedContent(type, data, lang);
 
+    const pushData: Record<string, any> = { ...(data || {}) };
+    if (entity) pushData.entity = entity;
+    if (entityId) pushData.entityId = entityId;
+
     try {
-      await this.prisma.notification.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId,
-          type: type as any,
-          title,
-          content: body,
-          data: data ? JSON.stringify(data) : null,
-          status: 'PENDING',
-          createdAt: new Date(),
-        },
-      });
+      await this.notificationService.sendNotificationToUser(userId, title, body, type, pushData);
     } catch (err) {
-      console.error('❌ Notification error:', err);
+      this.logger.error(`❌ Notification ${type} pour ${userId} : ${err?.message || err}`);
     }
   }
 
-  private getTranslatedContent(
-    type: NotificationType,
-    data: any,
-    lang: string,
-  ) {
-    let titleKey: string, bodyKey: string;
-
+  private keysFor(type: NotificationType, data: any): string {
     switch (type) {
-      // Transactions
-      case NotificationType.DEPOSIT_SUCCESS:
-        titleKey = 'notifications.deposit_success.title';
-        bodyKey = 'notifications.deposit_success.body';
-        break;
-      case NotificationType.CASHOUT_SUCCESS:
-        titleKey = 'notifications.cashout_success.title';
-        bodyKey = 'notifications.cashout_success.body';
-        break;
-      case NotificationType.TRANSFER_SENT:
-        titleKey = 'notifications.transfer_sent.title';
-        bodyKey = 'notifications.transfer_sent.body';
-        break;
-      case NotificationType.TRANSFER_RECEIVED:
-        titleKey = 'notifications.transfer_received.title';
-        bodyKey = 'notifications.transfer_received.body';
-        break;
-      case NotificationType.PAYMENT_SENT:
-        titleKey = 'notifications.payment_sent.title';
-        bodyKey = 'notifications.payment_sent.body';
-        break;
-      case NotificationType.PAYMENT_RECEIVED:
-        titleKey = 'notifications.payment_received.title';
-        bodyKey = 'notifications.payment_received.body';
-        break;
-      
-      // Sécurité
-      case NotificationType.SECURITY_ALERT:
-        titleKey = 'notifications.security_alert.title';
-        bodyKey = 'notifications.security_alert.body';
-        break;
-      case NotificationType.LOGIN_ALERT:
-        titleKey = 'notifications.login_alert.title';
-        bodyKey = 'notifications.login_alert.body';
-        break;
-      
-      // Système
-      case NotificationType.SYSTEM:
-        titleKey = 'notifications.system.title';
-        bodyKey = 'notifications.system.body';
-        break;
-      case NotificationType.MAINTENANCE:
-        titleKey = 'notifications.maintenance.title';
-        bodyKey = 'notifications.maintenance.body';
-        break;
-      
-      // Promotions
-      case NotificationType.PROMO:
-        titleKey = 'notifications.promo.title';
-        bodyKey = 'notifications.promo.body';
-        break;
-      
-      default:
-        titleKey = 'notifications.default.title';
-        bodyKey = 'notifications.default.body';
+      // ── Types génériques (procédure standard) ──
+      case NotificationType.TRANSACTION:
+        if (data?.operationType === 'deposit' || data?.operationType === 'topup') return 'deposit_success';
+        if (data?.operationType === 'withdrawal' || data?.operationType === 'cashout') return 'cashout_success';
+        return 'transaction';
+      case NotificationType.TRANSFER:
+        if (data?.direction === 'sent') return 'transfer_sent';
+        if (data?.direction === 'received') return 'transfer_received';
+        return 'transfer';
+      case NotificationType.PAYMENT:
+        if (data?.direction === 'sent') return 'payment_sent';
+        if (data?.direction === 'received') return 'payment_received';
+        return 'payment';
+      case NotificationType.SECURITY:
+        return data?.event ? `security.${data.event}` : 'security_alert';
+
+      // ── Types précis ──
+      case NotificationType.DEPOSIT_SUCCESS: return 'deposit_success';
+      case NotificationType.CASHOUT_SUCCESS: return 'cashout_success';
+      case NotificationType.TRANSFER_SENT: return 'transfer_sent';
+      case NotificationType.TRANSFER_RECEIVED: return 'transfer_received';
+      case NotificationType.PAYMENT_SENT: return 'payment_sent';
+      case NotificationType.PAYMENT_RECEIVED: return 'payment_received';
+      case NotificationType.ACCOUNT_LOCKED: return 'account_locked';
+      case NotificationType.ACCOUNT_UNLOCKED: return 'account_unlocked';
+      case NotificationType.PASSWORD_CHANGED: return 'password_changed';
+      case NotificationType.PIN_CHANGED: return 'pin_changed';
+      case NotificationType.PIN_CREATED: return 'pin_created';
+      case NotificationType.LOGIN_ALERT: return 'login_alert';
+      case NotificationType.LOGIN_FAILED: return 'login_failed';
+      case NotificationType.SECURITY_ALERT: return 'security_alert';
+      case NotificationType.TWO_FA_ENABLED: return 'two_fa_enabled';
+      case NotificationType.TWO_FA_DISABLED: return 'two_fa_disabled';
+      case NotificationType.SUSPICIOUS_ACTIVITY: return 'suspicious_activity';
+      case NotificationType.SYSTEM: return 'system';
+      case NotificationType.MAINTENANCE: return 'maintenance';
+      case NotificationType.UPDATE_AVAILABLE: return 'update_available';
+      case NotificationType.PROMO: return 'promo';
+      case NotificationType.OFFER_AVAILABLE: return 'offer_available';
+      case NotificationType.REFERRAL_BONUS: return 'referral_bonus';
+      default: return 'default';
     }
+  }
 
-    const title = this.i18nService.translate(titleKey, lang);
-    const body = this.i18nService.translate(bodyKey, lang, {
-      amount: data?.amount,
-      currency: data?.currency || 'CDF',
-      receiverName: data?.receiverName,
-      senderName: data?.senderName,
-      merchantName: data?.merchantName,
-      ipAddress: data?.ipAddress,
-      deviceName: data?.deviceName,
-      time: data?.time,
-    });
+  private getTranslatedContent(type: NotificationType, data: any, lang: string) {
+    const key = this.keysFor(type, data);
+    const params = {
+      amount: data?.amount ?? '',
+      currency: data?.currency || 'USD',
+      receiverName: data?.receiverName || data?.toName || '',
+      senderName: data?.senderName || data?.fromName || '',
+      accountNumber: data?.accountNumber || '',
+      receiverAccountNumber: data?.receiverAccountNumber || '',
+      senderAccountNumber: data?.senderAccountNumber || '',
+      reference: data?.reference || '',
+      balance: data?.balance ?? '',
+      merchantName: data?.merchantName || '',
+      customerName: data?.customerName || '',
+      ipAddress: data?.ipAddress || '',
+      deviceName: data?.deviceName || '',
+      time: data?.time || '',
+      message: data?.message || '',
+      reason: data?.reason || '',
+    };
 
-    return { title, body };
+    let title = this.i18nService.translate(`notifications.${key}.title`, lang, params);
+    let body = this.i18nService.translate(`notifications.${key}.body`, lang, params);
+
+    // Clé absente → texte par défaut plutôt que la clé brute
+    if (title === `notifications.${key}.title`) {
+      title = this.i18nService.translate('notifications.default.title', lang);
+    }
+    if (body === `notifications.${key}.body`) {
+      body = data?.message || this.i18nService.translate('notifications.default.body', lang);
+    }
+    return { title, body: body.replace(/\s+/g, ' ').trim() };
   }
 }

@@ -33,6 +33,7 @@ Le guard JWT vérifie maintenant en base (cache 15 s) :
 | GET | `admin/users/:userId/transactions` | Historique de tous les comptes d'un utilisateur |
 | GET | `admin/users/:userId/beneficiaries` | Bénéficiaires d'un utilisateur (`?search=`) |
 | GET | `admin/transactions/:id` | Détail d'une transaction (`?accountNumber=` pour chercher aussi dans l'historique) |
+| GET | `admin/accounts/:accountNumber/statement/download` | **Relevé PDF** (`?startDate=&endDate=&format=base64&sendEmail=true&email=`) |
 
 Filtres d'historique : `page`, `limit`, `type`, `status`, `movement` (`CREDIT`/`DEBIT`),
 `startDate`, `endDate` (`AAAA-MM-JJ`).
@@ -69,6 +70,17 @@ Body optionnel :
 | GET | `admin/settings/operations` | ADMIN, SUPER_ADMIN |
 | PATCH | `admin/settings/operations` | **SUPER_ADMIN** |
 | GET | `settings/operations/public` | Public (apps) |
+| GET | `admin/settings/limits/:userId` | Limites d'un utilisateur : propres, globales et effectives |
+| PATCH | `admin/settings/limits/:userId` | Limites propres à un utilisateur (priment sur les globales) |
+| DELETE | `admin/settings/limits/:userId` | Retour aux limites globales |
+| GET / PATCH | `admin/settings/general` | Paramètres généraux de l'application (fusion, pas d'écrasement) |
+
+Exemple de limites par utilisateur :
+```json
+{ "USD": { "maxPerOperation": 5000, "maxDailyPerUser": 20000 }, "transfersEnabled": true, "note": "Commerçant" }
+```
+`null` = aucune limite pour cet utilisateur ; champ absent = limite globale.
+`transfersEnabled: false` coupe les transferts de cet utilisateur uniquement.
 
 Exemple de `PATCH` (on peut n'envoyer qu'une partie) :
 ```json
@@ -105,6 +117,18 @@ Codes d'erreur renvoyés aux apps : `MAINTENANCE`, `OPERATION_DISABLED_TRANSFER`
 | GET | `admin/monitoring/sms` | Journal des SMS : envoyés / échoués, taux de succès (`?status=SENT\|FAILED&phone=&from=&to=&page=&limit=`) |
 | GET | `admin/reports/operations` | Totaux par opération et devise, évolution par jour, top utilisateurs, dernières opérations (`?from=&to=&action=TRANSFER\|DEPOSIT\|WITHDRAWAL&currency=&userId=`) |
 | GET | `admin/reports/operations/export` | **CSV** des opérations (mêmes filtres) |
+| GET | `admin/stats/users` | Utilisateurs **MOBILE / WEB** : inscrits, par statut, nouveaux, actifs sur la période, connexions, en ligne maintenant, appareils prêts pour les notifications (`?from=&to=`) |
+| GET | `admin/stats/transactions` | **Volumes** : par devise, par type, par plateforme, évolution, top utilisateurs (filtres ci-dessous) |
+| GET | `admin/transactions` | **Liste** paginée des transactions + résumé des volumes (mêmes filtres) |
+| GET | `admin/transactions/export` | **CSV** des transactions (mêmes filtres) |
+| POST | `admin/notifications/send` | Notification à un utilisateur (`userId`) ou à un groupe (`audience`: `ALL`, `MOBILE`, `WEB` — SUPER_ADMIN) |
+| GET | `admin/monitoring/email` | État de l'envoi d'emails (config, dernière erreur SMTP) — `?verify=false` pour ne pas tester la connexion |
+| POST | `admin/monitoring/email/test` | Envoie un email de test — body `{ "to": "adresse@exemple.com" }` |
+
+**Filtres des transactions** : `from`, `to` (AAAA-MM-JJ), `type` (`TRANSFER`, `DEPOSIT`, `WITHDRAWAL`, plusieurs séparés par une virgule),
+`currency` (`USD`/`CDF`), `platform` (`MOBILE`/`WEB`), `status`, `userId`, `accountNumber`, `minAmount`, `maxAmount`,
+`search` (référence, id banque, nom, compte, code client), `groupBy` (`day`/`week`/`month`), `sort`
+(`date_desc`, `date_asc`, `amount_desc`, `amount_asc`), `page`, `limit`.
 
 - Période par défaut : 30 derniers jours. Format `AAAA-MM-JJ`.
 - Les CSV utilisent le séparateur `;` et l'encodage UTF-8 avec BOM : ils s'ouvrent directement dans Excel.

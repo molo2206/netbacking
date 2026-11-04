@@ -12,6 +12,9 @@ import { UserApprovalService } from './approval/user-approval.service';
 import { AdminSecurityService } from './admin/admin-security.service';
 import { OperationControlsService } from './admin/operation-controls.service';
 import { AdminMonitoringService } from './admin/admin-monitoring.service';
+import { AdminStatsService } from './admin/admin-stats.service';
+import { UserNotificationsService } from './account/user-notifications.service';
+import { NotificationModule } from 'apps/notification-service/src/notification.module';
 
 @Module({
   imports: [
@@ -19,6 +22,7 @@ import { AdminMonitoringService } from './admin/admin-monitoring.service';
     ConfigModule,
     I18nModule,
     BankModule,   // ✅ AJOUTER (fournit BankService + EncryptionService)
+    NotificationModule, // ✅ push + historique des notifications (procédure standard AccesFinance)
   ],
   controllers: [UserServiceController],
   providers: [
@@ -27,6 +31,8 @@ import { AdminMonitoringService } from './admin/admin-monitoring.service';
     AdminSecurityService,
     OperationControlsService,
     AdminMonitoringService,
+    AdminStatsService,
+    UserNotificationsService,
     PrismaService,
     SmsService,
   ],

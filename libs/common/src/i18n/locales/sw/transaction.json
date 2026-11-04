@@ -115,5 +115,7 @@
   "bank_invalid_response": "Jibu la benki halisomeki. Tafadhali jaribu tena.",
   "invalid_account_number": "Namba ya akaunti si sahihi: {{value}}. Weka namba ya akaunti (mf. 200200000007), si kumbukumbu au kitambulisho cha muamala.",
   "otp_too_many_attempts": "Misimbo mingi isiyo sahihi. Msimbo huu umefutwa: anza uhamisho upya ili kupokea msimbo mpya.",
-  "otp_invalid_attempts_left": "Msimbo wa OTP si sahihi. Umebakiza majaribio {{remaining}}."
+  "otp_invalid_attempts_left": "Msimbo wa OTP si sahihi. Umebakiza majaribio {{remaining}}.",
+  "transfer_sent_sms": "AccesFinance: Habari {{firstName}}, umetuma {{amount}} {{currency}} kwa {{receiverName}} (akaunti {{receiverAccountNumber}}). Kumb: {{reference}}. Salio: {{balance}} {{currency}}.",
+  "transfer_received_sms": "AccesFinance: Habari {{firstName}}, umepokea {{amount}} {{currency}} kutoka kwa {{senderName}} kwenye akaunti yako {{accountNumber}}. Kumb: {{reference}}."
 }

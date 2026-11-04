@@ -115,5 +115,7 @@
   "bank_invalid_response": "La réponse de la banque est illisible. Veuillez réessayer.",
   "invalid_account_number": "Numéro de compte invalide : {{value}}. Indiquez un numéro de compte (ex. 200200000007), pas une référence ou un identifiant de transaction.",
   "otp_too_many_attempts": "Trop de codes incorrects. Ce code a été annulé : relancez le transfert pour recevoir un nouveau code.",
-  "otp_invalid_attempts_left": "Code OTP incorrect. Il vous reste {{remaining}} essai(s)."
+  "otp_invalid_attempts_left": "Code OTP incorrect. Il vous reste {{remaining}} essai(s).",
+  "transfer_sent_sms": "AccesFinance : Bonjour {{firstName}}, vous avez envoyé {{amount}} {{currency}} à {{receiverName}} (compte {{receiverAccountNumber}}). Réf : {{reference}}. Solde : {{balance}} {{currency}}.",
+  "transfer_received_sms": "AccesFinance : Bonjour {{firstName}}, vous avez reçu {{amount}} {{currency}} de {{senderName}} sur votre compte {{accountNumber}}. Réf : {{reference}}."
 }

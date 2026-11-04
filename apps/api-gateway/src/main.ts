@@ -1,3 +1,5 @@
+// ✅ Charge le .env AVANT tout le reste (les services lisent process.env dès leur construction)
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ApiGatewayModule } from './api-gateway.module';
 

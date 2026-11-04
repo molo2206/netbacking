@@ -17,10 +17,21 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { I18nService } from '../../../libs/common/src/i18n/i18n.service';
 import { NotificationHelper } from 'apps/notification-service/src/helpers/NotificationHelper';
 import { NotificationType } from 'apps/notification-service/src/type/notification-type';
+import { notifyBankOperation, BankNotificationDeps } from './utils/bank-notification.util';
+import { MailService } from 'apps/auth-service/src/email/email.service';
+import { getLogoDataUri } from '../../../libs/common/src/branding/brand';
+import {
+  renderStatementHtml,
+  statementLabels,
+  StatementRow,
+} from '../../../libs/common/src/branding/statement-template';
+import { htmlToPdf } from '../../../libs/common/src/pdf/html-to-pdf';
 import { SmsService } from 'apps/auth-service/src/sms/sms.service';
 import { BankService, BankPlatform } from './bank/bank.service';
 import {
+  effectiveLimits,
   loadOperationControls,
+  loadUserLimits,
   startOfLocalDay,
 } from '../../../libs/common/src/settings/operation-controls';
 // 👇 Import du service bancaire (adapte le chemin à ta structure)
@@ -35,6 +46,7 @@ export class TransactionServiceService {
     private readonly notificationHelper: NotificationHelper,
     private readonly smsService: SmsService,
     private readonly bankService: BankService,
+    private readonly mailService: MailService,
   ) { }
 
   // ========================= UTILITAIRES =========================
@@ -73,7 +85,11 @@ export class TransactionServiceService {
     currencyInput: string | undefined,
     lang: string,
   ) {
-    const controls = await loadOperationControls(this.prisma);
+    // Limites globales, puis limites propres à l'utilisateur (admin/settings/limits/:userId)
+    const controls = effectiveLimits(
+      await loadOperationControls(this.prisma),
+      await loadUserLimits(this.prisma, userId),
+    );
     const fail = (key: string, statusCode: number, params: Record<string, any> = {}) => {
       throw new RpcException({
         status: 'error',
@@ -261,6 +277,18 @@ export class TransactionServiceService {
       select: { push_notifications: true },
     });
     return settings?.push_notifications ?? true;
+  }
+
+  /** Dépendances de notifyBankOperation (SMS + push, réglages et langue de l'utilisateur). */
+  private notificationDeps(): BankNotificationDeps {
+    return {
+      smsService: this.smsService,
+      notificationHelper: this.notificationHelper,
+      i18nService: this.i18nService,
+      shouldSendSms: (id) => this.shouldSendSms(id),
+      shouldSendPush: (id) => this.shouldSendPush(id),
+      getUserLanguage: (id) => this.getUserLanguage(id),
+    };
   }
 
   private async getUserLanguage(userId: string): Promise<string> {
@@ -771,86 +799,77 @@ export class TransactionServiceService {
       await this.logAudit(data.initiatedBy, 'TRANSFER', {
         from: data.senderAccountNumber,
         to: data.receiverAccountNumber,
+        receiverName: bankData?.beneficiaryName || data.receiverName || null,
         amount: data.amount,
+        fees: bankData?.fees ?? 0,
         currency,
+        platform: data.platform || 'Mobile',
+        status: bankData?.status ?? 'SUCCESS',
         bankTransactionId: bankData?.transactionId,
         bankReference: bankData?.reference,
       }, 'TRANSFER', bankData?.transactionId ?? null);
 
-      // ─── 5. Notifications (comptes depuis l'API bancaire) ──────────
+      // ─── 5. Notifications : SMS + push (procédure standard AccesFinance) ──
       try {
-        const senderLang = await this.getUserLanguage(data.initiatedBy);
-
-        let senderAccount: any = null;
-        try {
-          const senderRes = await this.bankService.getAccountDetails(
-            data.senderAccountNumber, undefined, lang,
-          );
-          senderAccount = senderRes?.data ?? senderRes;
-          if (typeof senderAccount === 'string') {
-            try { senderAccount = JSON.parse(senderAccount); } catch { /* */ }
+        const readAccount = async (accountNumber: string) => {
+          try {
+            const res = await this.bankService.getAccountDetails(accountNumber, undefined, lang);
+            let acc: any = res?.data ?? res;
+            if (typeof acc === 'string') { try { acc = JSON.parse(acc); } catch { /* */ } }
+            return acc;
+          } catch (err) {
+            this.logger.warn(`[Transfer] GetAccountDetails ${accountNumber} : ${err?.message || err}`);
+            return null;
           }
-        } catch (err) {
-          this.logger.warn(
-            `[Transfer] GetAccountDetails sender failed: ${err?.message || err}`,
-          );
+        };
+        const clientName = (acc: any) =>
+          acc?.client
+            ? `${acc.client.firstName || ''} ${acc.client.lastName || ''}`.trim()
+            : acc?.clientName || '';
+
+        const [senderAccount, receiverAccount] = await Promise.all([
+          readAccount(data.senderAccountNumber),
+          readAccount(data.receiverAccountNumber),
+        ]);
+        const receiverName =
+          String(bankData?.beneficiaryName || data.receiverName || clientName(receiverAccount) || '').trim();
+        const senderName = clientName(senderAccount);
+
+        const op = {
+          id: bankData?.transactionId ?? null,
+          reference: bankData?.reference ?? null,
+          amount: data.amount,
+          currency,
+        };
+
+        // Expéditeur
+        const sender = await this.prisma.user.findUnique({
+          where: { id: data.initiatedBy },
+          select: { id: true, phone: true, firstName: true, lastName: true },
+        });
+        if (sender) {
+          await notifyBankOperation(this.notificationDeps(), 'transfer_sent', sender, {
+            ...op,
+            accountNumber: data.senderAccountNumber,
+            balance: bankData?.senderBalance ?? senderAccount?.balance ?? null,
+          }, { name: receiverName, accountNumber: data.receiverAccountNumber });
         }
 
-        await this.notificationHelper.notify(
-          data.initiatedBy,
-          NotificationType.TRANSFER_SENT,
-          {
-            amount: data.amount,
-            fees: bankData?.fees ?? 0,
-            receiverName: bankData?.beneficiaryName || data.receiverName || 'Unknown',
-            reference: bankData?.reference,
-            currency,
-          },
-          'TRANSFER',
-          bankData?.transactionId,
-          senderLang,
-        );
-
-        let receiverAccount: any = null;
-        try {
-          const receiverRes = await this.bankService.getAccountDetails(
-            data.receiverAccountNumber, undefined, lang,
-          );
-          receiverAccount = receiverRes?.data ?? receiverRes;
-          if (typeof receiverAccount === 'string') {
-            try { receiverAccount = JSON.parse(receiverAccount); } catch { /* */ }
-          }
-        } catch (err) {
-          this.logger.warn(
-            `[Transfer] GetAccountDetails receiver failed: ${err?.message || err}`,
-          );
-        }
-
+        // Destinataire (s'il utilise l'application)
         const receiverClientId = receiverAccount?.clientId ?? receiverAccount?.client?.clientId;
         if (receiverClientId) {
           const receiverUser = await this.prisma.user.findFirst({
-            where: { clientId: receiverClientId },
+            where: { clientId: String(receiverClientId) },
+            select: { id: true, phone: true, firstName: true, lastName: true },
           });
-          if (receiverUser) {
-            const receiverLang = await this.getUserLanguage(receiverUser.id);
-
-            const senderFullName = senderAccount?.client
-              ? `${senderAccount.client.firstName || ''} ${senderAccount.client.lastName || ''}`.trim()
-              : senderAccount?.clientName || 'Unknown';
-
-            await this.notificationHelper.notify(
-              receiverUser.id,
-              NotificationType.TRANSFER_RECEIVED,
-              {
-                amount: data.amount,
-                senderName: senderFullName,
-                reference: bankData?.reference,
-                currency,
-              },
-              'TRANSFER',
-              bankData?.transactionId,
-              receiverLang,
-            );
+          if (receiverUser && receiverUser.id !== data.initiatedBy) {
+            await notifyBankOperation(this.notificationDeps(), 'transfer_received', receiverUser, {
+              ...op,
+              accountNumber: data.receiverAccountNumber,
+              balance: receiverAccount?.balance != null
+                ? Number(receiverAccount.balance) + Number(data.amount)
+                : null,
+            }, { name: senderName, accountNumber: data.senderAccountNumber });
           }
         }
       } catch (notifError) {
@@ -935,48 +954,36 @@ export class TransactionServiceService {
       await this.logAudit(
         data.initiatedBy || null,
         'DEPOSIT',
-        { accountNumber: data.accountNumber, amount: data.amount, currency, bankData },
+        {
+          accountNumber: data.accountNumber,
+          amount: data.amount,
+          currency,
+          platform: data.platform || 'Mobile',
+          status: bankData?.status ?? 'SUCCESS',
+          bankTransactionId: bankData?.transactionId ?? null,
+          bankReference: bankData?.reference ?? null,
+          bankData,
+        },
         'ACCOUNT',
         bankData?.transactionId ?? null,
       );
 
-      try {
-        if (data.initiatedBy) {
-          const userLang = await this.getUserLanguage(data.initiatedBy);
-          await this.notificationHelper.notify(
-            data.initiatedBy,
-            NotificationType.DEPOSIT_SUCCESS,
-            {
-              amount: data.amount,
-              accountNumber: data.accountNumber,
-              newBalance: bankData?.balance ?? bankData?.newBalance,
-              currency,
-            },
-            'TRANSACTION',
-            bankData?.transactionId,
-            userLang,
-          );
-
-          const smsEnabled = await this.shouldSendSms(data.initiatedBy);
-          if (smsEnabled) {
-            const user = await this.prisma.user.findUnique({
-              where: { id: data.initiatedBy },
-              select: { phone: true, firstName: true, lastName: true },
-            });
-            if (user?.phone) {
-              const smsText = this.i18nService.translate('deposit_sms', userLang, {
-                firstName: user.firstName || '',
-                lastName: user.lastName || '',
-                amount: data.amount,
-                currency,
-                newBalance: bankData?.balance ?? bankData?.newBalance ?? '-',
-              });
-              await this.smsService.sendSms(user.phone, smsText);
-            }
-          }
+      // Notifications : SMS + push (procédure standard AccesFinance)
+      if (data.initiatedBy) {
+        const user = await this.prisma.user.findUnique({
+          where: { id: data.initiatedBy },
+          select: { id: true, phone: true, firstName: true, lastName: true },
+        });
+        if (user) {
+          await notifyBankOperation(this.notificationDeps(), 'deposit', user, {
+            id: bankData?.transactionId ?? null,
+            reference: bankData?.reference ?? null,
+            amount: data.amount,
+            currency,
+            accountNumber: data.accountNumber,
+            balance: bankData?.balance ?? bankData?.newBalance ?? null,
+          });
         }
-      } catch (notifError) {
-        this.logger.warn(`[Notifications] Deposit notification error: ${notifError.message}`);
       }
 
       return {
@@ -1050,48 +1057,36 @@ export class TransactionServiceService {
       await this.logAudit(
         data.initiatedBy || null,
         'WITHDRAWAL',
-        { accountNumber: data.accountNumber, amount: data.amount, currency, bankData },
+        {
+          accountNumber: data.accountNumber,
+          amount: data.amount,
+          currency,
+          platform: data.platform || 'Mobile',
+          status: bankData?.status ?? 'SUCCESS',
+          bankTransactionId: bankData?.transactionId ?? null,
+          bankReference: bankData?.reference ?? null,
+          bankData,
+        },
         'ACCOUNT',
         bankData?.transactionId ?? null,
       );
 
-      try {
-        if (data.initiatedBy) {
-          const userLang = await this.getUserLanguage(data.initiatedBy);
-          await this.notificationHelper.notify(
-            data.initiatedBy,
-            NotificationType.CASHOUT_SUCCESS,
-            {
-              amount: data.amount,
-              accountNumber: data.accountNumber,
-              newBalance: bankData?.balance ?? bankData?.newBalance,
-              currency,
-            },
-            'TRANSACTION',
-            bankData?.transactionId,
-            userLang,
-          );
-
-          const smsEnabled = await this.shouldSendSms(data.initiatedBy);
-          if (smsEnabled) {
-            const user = await this.prisma.user.findUnique({
-              where: { id: data.initiatedBy },
-              select: { phone: true, firstName: true, lastName: true },
-            });
-            if (user?.phone) {
-              const smsText = this.i18nService.translate('withdraw_sms', userLang, {
-                firstName: user.firstName || '',
-                lastName: user.lastName || '',
-                amount: data.amount,
-                currency,
-                newBalance: bankData?.balance ?? bankData?.newBalance ?? '-',
-              });
-              await this.smsService.sendSms(user.phone, smsText);
-            }
-          }
+      // Notifications : SMS + push (procédure standard AccesFinance)
+      if (data.initiatedBy) {
+        const user = await this.prisma.user.findUnique({
+          where: { id: data.initiatedBy },
+          select: { id: true, phone: true, firstName: true, lastName: true },
+        });
+        if (user) {
+          await notifyBankOperation(this.notificationDeps(), 'withdrawal', user, {
+            id: bankData?.transactionId ?? null,
+            reference: bankData?.reference ?? null,
+            amount: data.amount,
+            currency,
+            accountNumber: data.accountNumber,
+            balance: bankData?.balance ?? bankData?.newBalance ?? null,
+          });
         }
-      } catch (notifError) {
-        this.logger.warn(`[Notifications] Withdraw notification error: ${notifError.message}`);
       }
 
       return {
@@ -2208,6 +2203,209 @@ export class TransactionServiceService {
         contentType: 'text/csv; charset=utf-8',
         rows: rows.length,
         content: '\uFEFF' + [header.join(';'), ...lines].join('\r\n'),
+      },
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RELEVÉ DE COMPTE PDF — gabarit officiel AccesFinance
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Génère le relevé PDF d'un compte.
+   *  - userId fourni → le compte doit appartenir à l'utilisateur (sauf ADMIN / SUPER_ADMIN)
+   *  - sendEmail → le PDF est aussi envoyé à l'email du client
+   */
+  async generateStatementPdf(params: {
+    accountNumber: string;
+    userId?: string;
+    startDate?: string;
+    endDate?: string;
+    lang?: string;
+    sendEmail?: boolean;
+    email?: string;
+  }) {
+    const lang = ['fr', 'en', 'sw'].includes(params.lang || '') ? (params.lang as string) : 'fr';
+    const L = statementLabels(lang);
+    const accountNumber = this.assertAccountNumber(params.accountNumber, lang);
+    await this.assertAccountOwnership(accountNumber, params.userId, lang);
+
+    const isDay = (v?: string) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if ((params.startDate && !isDay(params.startDate)) || (params.endDate && !isDay(params.endDate))) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('statement_invalid_dates', lang),
+        statusCode: 400,
+      });
+    }
+
+    // 1. Compte (banque)
+    const accRes = await this.bankService.getAccountDetails(accountNumber, undefined, lang);
+    let acc: any = accRes?.data ?? accRes;
+    if (typeof acc === 'string') { try { acc = JSON.parse(acc); } catch { /* */ } }
+    if (!acc || !acc.accountNumber) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('account_not_found', lang),
+        statusCode: 404,
+      });
+    }
+    const clientId = String(acc.clientId ?? acc.client?.clientId ?? '').trim();
+    const localUser = clientId
+      ? await this.prisma.user.findFirst({
+          where: { clientId },
+          select: { firstName: true, lastName: true, phone: true, email: true },
+        })
+      : null;
+    const currency = String(acc.currency || 'USD').toUpperCase();
+
+    // 2. Historique complet (banque), ordre chronologique
+    const history = await this.fetchAllAccountTransactions({
+      accountNumber,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      lang,
+    });
+    const txs = [...history.transactions].sort((a, b) => {
+      const d = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return d !== 0 && !isNaN(d) ? d : (a._seq ?? 0) - (b._seq ?? 0);
+    });
+
+    // 3. Mise en forme
+    const locale = lang === 'en' ? 'en-US' : lang === 'sw' ? 'sw-TZ' : 'fr-FR';
+    const money = (n: number) =>
+      new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+    const dateFmt = (v: any) => {
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? String(v || '') : d.toLocaleDateString(locale, { timeZone: 'Africa/Lubumbashi' });
+    };
+    const typeLabel = (t: any) => {
+      const k = String(t || '').toUpperCase();
+      if (k.includes('TRANSFER')) return L.transfer;
+      if (k.includes('DEPOSIT') || k.includes('TOPUP')) return L.deposit;
+      if (k.includes('WITHDRAW') || k.includes('CASHOUT')) return L.withdrawal;
+      if (k.includes('PAYMENT')) return L.payment;
+      if (k.includes('FEE')) return L.fee;
+      return t ? String(t) : L.operation;
+    };
+
+    let totalCredits = 0;
+    let totalDebits = 0;
+    let running: number | null = null;
+    const rows: StatementRow[] = txs.map((t) => {
+      const amount = Number(t.amount || 0);
+      const isCredit = String(t.movement || '').toUpperCase() === 'CREDIT';
+      if (isCredit) totalCredits += amount; else totalDebits += amount;
+      const after = t.balanceAfter !== undefined && t.balanceAfter !== null ? Number(t.balanceAfter) : null;
+      if (after !== null && !isNaN(after)) running = after;
+      else running = (running ?? 0) + (isCredit ? amount : -amount);
+      return {
+        description: typeLabel(t.type),
+        detail: t.description || '',
+        reference: String(t.reference || t.id || ''),
+        date: dateFmt(t.createdAt),
+        credit: isCredit ? money(amount) : null,
+        debit: !isCredit ? money(amount) : null,
+        balance: money(running as number),
+      };
+    });
+
+    const first = txs[0];
+    const last = txs[txs.length - 1];
+    const finalBalance =
+      last && last.balanceAfter !== undefined && last.balanceAfter !== null
+        ? Number(last.balanceAfter)
+        : Number(acc.balance ?? 0);
+    const opening =
+      first && first.balanceBefore !== undefined && first.balanceBefore !== null
+        ? Number(first.balanceBefore)
+        : finalBalance - totalCredits + totalDebits;
+
+    const fullName =
+      (acc.client ? `${acc.client.firstName || ''} ${acc.client.lastName || ''}`.trim() : '') ||
+      (localUser ? `${localUser.firstName || ''} ${localUser.lastName || ''}`.trim() : '') ||
+      'N/A';
+
+    const html = renderStatementHtml({
+      lang,
+      logoDataUri: getLogoDataUri('pdf'),
+      periodStart: params.startDate ? dateFmt(`${params.startDate}T12:00:00Z`) : (first ? dateFmt(first.createdAt) : L.allTimeStart),
+      periodEnd: params.endDate ? dateFmt(`${params.endDate}T12:00:00Z`) : L.allTimeEnd,
+      generatedDate: new Date().toLocaleString(locale, { timeZone: 'Africa/Lubumbashi' }),
+      currency,
+      client: {
+        fullName,
+        clientId: clientId || 'N/A',
+        accountNumber,
+        accountType: acc.accountType || 'N/A',
+        phone: acc.client?.phone || localUser?.phone || 'N/A',
+        email: acc.client?.email || localUser?.email || 'N/A',
+      },
+      totals: {
+        opening: money(opening),
+        credits: money(totalCredits),
+        debits: money(totalDebits),
+        balance: money(finalBalance),
+        count: rows.length,
+      },
+      transactions: rows,
+      labels: {},
+    });
+
+    // 4. PDF
+    let pdf: Buffer;
+    try {
+      pdf = await htmlToPdf(html, { footerLabel: L.page, ofLabel: L.of });
+    } catch (err) {
+      this.logger.error(`[Statement] Génération PDF impossible : ${err?.message || err}`);
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('statement_pdf_failed', lang),
+        statusCode: 500,
+      });
+    }
+
+    const suffix = [params.startDate, params.endDate].filter(Boolean).join('_') || new Date().toISOString().slice(0, 10);
+    const filename = `releve_AccesFinance_${accountNumber}_${suffix}.pdf`;
+
+    // 5. Envoi par email (optionnel)
+    let emailSent: boolean | null = null;
+    if (params.sendEmail) {
+      const to = params.email || acc.client?.email || localUser?.email;
+      if (to) {
+        emailSent = await this.mailService.sendBrandedEmail(
+          to,
+          `AccesFinance — ${L.title} ${accountNumber}`,
+          {
+            lang,
+            title: L.title,
+            greeting: fullName !== 'N/A' ? `${fullName},` : undefined,
+            paragraphs: [
+              this.i18nService.translate('statement_email_body', lang, {
+                accountNumber,
+                periodStart: params.startDate || L.allTimeStart,
+                periodEnd: params.endDate || L.allTimeEnd,
+              }),
+            ],
+            signature: 'AccesFinance',
+          },
+          [{ filename, content: pdf, contentType: 'application/pdf' }],
+        );
+      } else {
+        emailSent = false;
+      }
+    }
+
+    return {
+      success: true,
+      message: this.i18nService.translate('statement_generated', lang),
+      data: {
+        filename,
+        contentType: 'application/pdf',
+        size: pdf.length,
+        transactions: rows.length,
+        emailSent,
+        pdfBase64: pdf.toString('base64'),
       },
     };
   }

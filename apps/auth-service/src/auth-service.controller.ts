@@ -297,10 +297,14 @@ export class AuthServiceController {
   }
 
   @MessagePattern('auth.registerDeviceToken')
-  async registerDeviceToken(@Payload() data: { userId: string; fcmToken: string }) {
+  async registerDeviceToken(
+    @Payload() data: { userId: string; fcmToken: string; platform?: string; deviceName?: string },
+  ) {
     try {
       console.log('[AuthService] Register device token request received:', data.userId);
-      return await this.authService.registerDeviceToken(data.userId, data.fcmToken);
+      return await this.authService.registerDeviceToken(
+        data.userId, data.fcmToken, data.platform, data.deviceName,
+      );
     } catch (error) {
       console.error('[AuthService] Register device token failed:', error);
       throw new RpcException({
@@ -546,4 +550,4 @@ export class AuthServiceController {
       timestamp: new Date().toISOString(),
     };
   }
-}
+}

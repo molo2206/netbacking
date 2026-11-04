@@ -31,7 +31,7 @@ import {
   generateTemporaryPassword,
   getTemporaryPasswordExpiryHours,
 } from '../../../../libs/common/src/security/temporary-password.util';
-import { extractBankObject } from '../../../../libs/common/src/bank/bank-accounts.util';
+import { extractBankObject, hasBankClientIdentity } from '../../../../libs/common/src/bank/bank-accounts.util';
 import {
   normalizePhoneToInternational,
   phoneVariants,
@@ -196,6 +196,7 @@ export class UserApprovalService {
           this.i18nService.translate('temp_password_email_title', lang),
           'welcome-email.html',
           {
+            lang,
             title: this.i18nService.translate('temp_password_email_title', lang),
             greeting: this.i18nService.translate('temp_password_email_greeting', lang, {
               full_name: fullName,
@@ -289,7 +290,8 @@ export class UserApprovalService {
       throw this.rpcError(this.i18nService.translate('bank_unavailable', lang), 502);
     }
 
-    if (!clientDetails || !clientDetails.clientId) {
+    // ✅ Client inconnu : la banque renvoie le clientId avec tous les champs à null
+    if (!hasBankClientIdentity(clientDetails)) {
       throw this.rpcError(this.i18nService.translate('client_id_not_found', lang), 404);
     }
 

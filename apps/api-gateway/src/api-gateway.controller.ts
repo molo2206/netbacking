@@ -190,7 +190,8 @@ export class ApiGatewayController {
     }
 
     // ✅ Déterminer la plateforme depuis le header x-client
-    const platform = clientHeader || body.platform || 'WEB';
+    // Plateforme : header x-client, sinon body, sinon déduite du user-agent par auth-service
+    const platform = clientHeader || body.platform || '';
 
     // ✅ Construire le payload
     const payload = {
@@ -218,6 +219,9 @@ export class ApiGatewayController {
   async login(
     @Body() body: any,
     @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgentHeader?: string,
+    @Request() req?: any,
   ) {
     const lang = langHeader || 'fr';
 
@@ -230,7 +234,14 @@ export class ApiGatewayController {
 
     return this.sendAuthMessage(
       'auth.login',
-      { ...body, lang },
+      {
+        ...body,
+        lang,
+        // ✅ Plateforme (MOBILE / WEB) pour les statistiques admin
+        platform: body.platform || clientHeader || undefined,
+        userAgent: body.userAgent || userAgentHeader || undefined,
+        ipAddress: body.ipAddress || req?.ip || undefined,
+      },
       'Login failed',
       HttpStatus.UNAUTHORIZED
     );
@@ -1141,7 +1152,8 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async registerDeviceToken(
     @CurrentUser() currentUser: any,
-    @Body() body: { fcmToken: string },
+    @Body() body: { fcmToken: string; platform?: string; deviceName?: string },
+    @Headers('x-client') clientHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
@@ -1152,7 +1164,12 @@ export class ApiGatewayController {
     }
     return this.sendAuthMessage(
       'auth.registerDeviceToken',
-      { userId: currentUser.id, fcmToken },
+      {
+        userId: currentUser.id,
+        fcmToken,
+        platform: body.platform || clientHeader || 'MOBILE',
+        deviceName: body.deviceName,
+      },
       'Failed to register device token',
       HttpStatus.INTERNAL_SERVER_ERROR
     );
@@ -2331,6 +2348,435 @@ export class ApiGatewayController {
       HttpStatus.BAD_REQUEST,
     );
   }
+  // ═════════════════════════════════════════════════════════════════════
+  // NOTIFICATIONS DE L'UTILISATEUR (routes standard AccesFinance)
+  // ═════════════════════════════════════════════════════════════════════
+
+  @Get('users/me/notifications')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getMyNotifications(
+    @CurrentUser() currentUser: any,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('unreadOnly') unreadOnly?: string,
+  ) {
+    const result: any = await this.sendUserMessage(
+      'notifications.list',
+      {
+        userId: currentUser.id,
+        page: this.toInt(page, 1),
+        limit: this.toInt(limit, 10),
+        unreadOnly: unreadOnly === 'true',
+      },
+      'Échec de récupération des notifications',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return {
+      message: result.message,
+      data: {
+        data: result.data,
+        total: result.total,
+        unreadCount: result.unreadCount,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    };
+  }
+
+  @Get('users/me/notifications/unread-count')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getMyUnreadNotifications(@CurrentUser() currentUser: any) {
+    const result: any = await this.sendUserMessage(
+      'notifications.unreadCount',
+      { userId: currentUser.id },
+      'Échec du comptage des notifications',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return { message: 'OK', data: result };
+  }
+
+  @Patch('users/me/notifications/read-all')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async markAllMyNotificationsAsRead(@CurrentUser() currentUser: any) {
+    return this.sendUserMessage(
+      'notifications.markAllSeen',
+      { userId: currentUser.id },
+      'Échec du marquage de toutes les notifications',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Patch('users/me/notifications/:id/read')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async markMyNotificationAsRead(
+    @CurrentUser() currentUser: any,
+    @Param('id') notificationId: string,
+  ) {
+    if (!notificationId) {
+      throw new HttpException('ID de notification requis', HttpStatus.BAD_REQUEST);
+    }
+    return this.sendUserMessage(
+      'notifications.markSeen',
+      { notificationId, userId: currentUser.id },
+      'Échec du marquage de la notification',
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
+  @Delete('users/me/notifications/:id')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async deleteMyNotification(
+    @CurrentUser() currentUser: any,
+    @Param('id') notificationId: string,
+  ) {
+    return this.sendUserMessage(
+      'notifications.delete',
+      { notificationId, userId: currentUser.id },
+      'Échec de la suppression de la notification',
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // PROFIL & COMPTE (routes standard AccesFinance)
+  // ═════════════════════════════════════════════════════════════════════
+
+  @Get('users/me/profile')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getMyProfileAlias(@CurrentUser() currentUser: any) {
+    return this.sendUserMessage(
+      'get_user',
+      { id: currentUser.id },
+      'User not found',
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
+  @Patch('users/me/profile')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async updateMyProfileAlias(@CurrentUser() currentUser: any, @Body() body: any) {
+    const data = { ...(body || {}) };
+    for (const k of ['role', 'status', 'password', 'pin', 'clientId', 'id']) delete data[k];
+    return this.sendUserMessage(
+      'update_user',
+      { id: currentUser.id, ...data },
+      'Update my profile failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  // Suppression de son accès à l'application (le compte bancaire n'est pas touché)
+  @Delete('users/me/account')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async deleteMyAccount(
+    @CurrentUser() currentUser: any,
+    @Body() body: { password: string },
+    @Headers('lang') langHeader?: string,
+    @Request() req?: any,
+  ) {
+    if (!body?.password || !String(body.password).trim()) {
+      throw new HttpException('Le mot de passe est requis pour supprimer votre compte', HttpStatus.BAD_REQUEST);
+    }
+    const lang = ['fr', 'en', 'sw'].includes(langHeader || '') ? langHeader : 'fr';
+    return this.sendUserMessage(
+      'delete_own_account',
+      { id: currentUser.id, password: body.password, lang, ipAddress: req?.ip || null },
+      'Échec de la suppression du compte',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // RELEVÉ DE COMPTE PDF (gabarit officiel AccesFinance)
+  //   ?startDate=AAAA-MM-JJ&endDate=AAAA-MM-JJ   (optionnels)
+  //   ?format=base64   → JSON { filename, pdfBase64 } au lieu du fichier
+  //   ?sendEmail=true  → le PDF est aussi envoyé à l'email du client
+  // ═════════════════════════════════════════════════════════════════════
+
+  private async sendStatement(res: any, payload: any, format?: string) {
+    const result: any = await this.sendTransactionMessage(
+      'transaction.statementPdf',
+      payload,
+      'Erreur génération relevé',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      300000,
+    );
+    const file = result?.data ?? result;
+    if (format === 'base64' || format === 'json') {
+      return res.json({ message: result?.message, data: file });
+    }
+    const pdf = Buffer.from(file.pdfBase64, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader('Content-Length', pdf.length);
+    if (file.emailSent !== null && file.emailSent !== undefined) {
+      res.setHeader('X-Email-Sent', String(file.emailSent));
+    }
+    return res.end(pdf);
+  }
+
+  @Get('transactions/statement/:accountNumber/download')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async downloadStatement(
+    @CurrentUser() currentUser: any,
+    @Param('accountNumber') accountNumber: string,
+    @Res() res: any,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('format') format?: string,
+    @Query('sendEmail') sendEmail?: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    return this.sendStatement(res, {
+      accountNumber,
+      userId: currentUser.id,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      sendEmail: sendEmail === 'true',
+      lang: langHeader || 'fr',
+    }, format);
+  }
+
+  @Get('admin/accounts/:accountNumber/statement/download')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminDownloadStatement(
+    @CurrentUser() currentUser: any,
+    @Param('accountNumber') accountNumber: string,
+    @Res() res: any,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('format') format?: string,
+    @Query('sendEmail') sendEmail?: string,
+    @Query('email') email?: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendStatement(res, {
+      accountNumber,
+      userId: currentUser.id, // admin : contrôle d'appartenance levé côté service
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      sendEmail: sendEmail === 'true',
+      email: email || undefined,
+      lang: langHeader || 'fr',
+    }, format);
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // ADMIN — STATISTIQUES : utilisateurs mobile / web, volumes de transactions
+  // Filtres transactions : from, to (AAAA-MM-JJ), type (TRANSFER,DEPOSIT,WITHDRAWAL),
+  //   currency (USD|CDF), platform (MOBILE|WEB), status, userId, accountNumber,
+  //   minAmount, maxAmount, search, groupBy (day|week|month), sort, page, limit
+  // ═════════════════════════════════════════════════════════════════════
+
+  private transactionFilters(query: any, lang?: string) {
+    return {
+      from: query.from || query.startDate,
+      to: query.to || query.endDate,
+      type: query.type,
+      currency: query.currency,
+      platform: query.platform,
+      status: query.status,
+      userId: query.userId,
+      accountNumber: query.accountNumber,
+      minAmount: query.minAmount,
+      maxAmount: query.maxAmount,
+      search: query.search,
+      groupBy: query.groupBy,
+      sort: query.sort,
+      page: this.toInt(query.page, 1),
+      limit: this.toInt(query.limit, 20),
+      lang: lang || 'fr',
+    };
+  }
+
+  @Get('admin/stats/users')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminStatsUsers(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.stats.users',
+      { from: query.from, to: query.to, lang: langHeader || 'fr' },
+      'Failed to get user stats', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Get('admin/stats/transactions')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminStatsTransactions(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.stats.transactions', this.transactionFilters(query, langHeader),
+      'Failed to get transaction stats', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  // Liste des transactions (route standard) + résumé des volumes
+  @Get('admin/transactions')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminListTransactions(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.transactions.list', this.transactionFilters(query, langHeader),
+      'Échec de la récupération des transactions', HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  @Get('admin/transactions/export')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminExportTransactions(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Res() res: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    const result = await this.sendUserMessage(
+      'admin.transactions.csv', this.transactionFilters(query, langHeader),
+      'Failed to export transactions', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return this.sendCsv(res, result);
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // ADMIN — LIMITES PAR UTILISATEUR (priment sur admin/settings/operations)
+  //   body PATCH : { "USD": { "maxPerOperation": 5000, "maxDailyPerUser": 20000 },
+  //                  "CDF": { … }, "transfersEnabled": false, "note": "…" }
+  // ═════════════════════════════════════════════════════════════════════
+
+  @Get('admin/settings/limits/:userId')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminGetUserLimits(
+    @Param('userId') userId: string,
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage('admin.limits.get', { userId, lang: langHeader || 'fr' },
+      'Failed to get limits', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  @Patch('admin/settings/limits/:userId')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminUpdateUserLimits(
+    @Param('userId') userId: string,
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+    @Request() req?: any,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage('admin.limits.update',
+      { userId, adminId: currentUser.id, patch: body || {}, lang: langHeader || 'fr', ipAddress: req?.ip || null },
+      'Failed to update limits', HttpStatus.BAD_REQUEST);
+  }
+
+  @Delete('admin/settings/limits/:userId')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminResetUserLimits(
+    @Param('userId') userId: string,
+    @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage('admin.limits.reset', { userId, adminId: currentUser.id, lang: langHeader || 'fr' },
+      'Failed to reset limits', HttpStatus.BAD_REQUEST);
+  }
+
+  // Paramètres généraux (mêmes données que admin/settings/app)
+  @Get('admin/settings/general')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminGetGeneralSettings(@CurrentUser() currentUser: any) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage('get_app_settings', {}, 'Failed to get settings', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  @Patch('admin/settings/general')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminUpdateGeneralSettings(@CurrentUser() currentUser: any, @Body() body: any) {
+    this.assertAdmin(currentUser);
+    // Fusion avec les paramètres existants (upsert_app_settings remplace tout)
+    const current: any = await this.sendUserMessage(
+      'get_app_settings', {}, 'Failed to get settings', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    const merged = { ...(current?.data || {}), ...(body || {}) };
+    return this.sendUserMessage('upsert_app_settings', merged, 'Failed to update settings', HttpStatus.BAD_REQUEST);
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // ADMIN — NOTIFICATIONS & EMAIL
+  // ═════════════════════════════════════════════════════════════════════
+
+  // body : { title, body, userId? , audience?: 'ALL' | 'MOBILE' | 'WEB' }
+  @Post('admin/notifications/send')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminSendNotification(
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    if (!body?.userId && body?.audience && body.audience !== 'USER') this.assertSuperAdmin(currentUser);
+    if (!body?.userId && !body?.audience) this.assertSuperAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.notifications.send',
+      {
+        adminId: currentUser.id,
+        userId: body?.userId,
+        audience: body?.audience,
+        title: body?.title,
+        body: body?.body,
+        lang: langHeader || 'fr',
+      },
+      'Failed to send notification', HttpStatus.BAD_REQUEST,
+      300000,
+    );
+  }
+
+  // État de l'envoi d'emails (?verify=false pour ne pas tester la connexion SMTP)
+  @Get('admin/monitoring/email')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminEmailStatus(
+    @CurrentUser() currentUser: any,
+    @Query('verify') verify?: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.monitoring.email', { verify: verify !== 'false', lang: langHeader || 'fr' },
+      'Failed to get email status', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  // Email de test — body : { "to": "adresse@exemple.com" }
+  @Post('admin/monitoring/email/test')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminEmailTest(
+    @CurrentUser() currentUser: any,
+    @Body() body: { to?: string },
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.monitoring.emailTest',
+      { to: body?.to || currentUser.email, adminId: currentUser.id, lang: langHeader || 'fr' },
+      'Failed to send test email', HttpStatus.BAD_GATEWAY,
+    );
+  }
+
   // ═════════════════════════════════════════════════════════════════════
   // ADMIN — CLIENTS & COMPTES BANCAIRES
   // ═════════════════════════════════════════════════════════════════════

@@ -1,34 +1,16 @@
 // apps/auth-service/src/email/email.module.ts
 import { Module } from '@nestjs/common';
-import { MailerModule } from '@nestjs-modules/mailer';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { MailService } from './email.service';
 
+/**
+ * Module d'envoi d'emails AccesFinance.
+ * ⚠️ L'ancien MailerModule (@nestjs-modules/mailer, variables SMTP_*) a été retiré :
+ *    il n'était utilisé nulle part et pouvait masquer la vraie configuration.
+ *    Tout passe par MailService (nodemailer, variables MAILER_*).
+ */
 @Module({
-  imports: [
-    ConfigModule, // Important : importez ConfigModule
-    MailerModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        transport: {
-          host: configService.get<string>('SMTP_HOST') || 'smtp.gmail.com',
-          port: configService.get<number>('SMTP_PORT') || 465,
-          secure: configService.get<string>('SMTP_SECURE') === 'true',
-          auth: {
-            user: configService.get<string>('SMTP_USER'),
-            pass: configService.get<string>('SMTP_PASSWORD'),
-          },
-          tls: {
-            rejectUnauthorized: false,
-          },
-        },
-        defaults: {
-          from: `"AccesFinance" <${configService.get<string>('SMTP_USER') || 'no-reply@accespay.com'}>`,
-        },
-      }),
-      inject: [ConfigService],
-    }),
-  ],
+  imports: [ConfigModule],
   providers: [MailService],
   exports: [MailService],
 })

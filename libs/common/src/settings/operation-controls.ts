@@ -161,3 +161,79 @@ export function startOfLocalDay(date: Date = new Date()): Date {
   const day = local.toISOString().slice(0, 10);
   return new Date(`${day}T00:00:00${APP_TZ_OFFSET}`);
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// LIMITES PAR UTILISATEUR (priment sur les limites globales)
+//   Table settings, clé "user_limits:<userId>", valeur JSON :
+//   { "USD": { "maxPerOperation": 5000, "maxDailyPerUser": 20000 }, "CDF": {…},
+//     "transfersEnabled": false }
+//   Champ absent = limite globale ; null = aucune limite pour cet utilisateur.
+// ═══════════════════════════════════════════════════════════════════
+
+export interface UserLimitOverride {
+  USD?: Partial<CurrencyLimits>;
+  CDF?: Partial<CurrencyLimits>;
+  transfersEnabled?: boolean;
+  depositsEnabled?: boolean;
+  withdrawalsEnabled?: boolean;
+  note?: string | null;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+}
+
+export const userLimitsKey = (userId: string) => `user_limits:${userId}`;
+
+export async function loadUserLimits(prisma: any, userId?: string | null): Promise<UserLimitOverride | null> {
+  if (!userId) return null;
+  try {
+    const row = await prisma.settings.findUnique({ where: { key: userLimitsKey(userId) } });
+    return row?.value ? (JSON.parse(row.value) as UserLimitOverride) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Nettoie une limite par utilisateur reçue de l'admin (valeurs numériques ≥ 0, null ou absentes). */
+export function sanitizeUserLimits(patch: any, base: UserLimitOverride | null = null): UserLimitOverride {
+  const out: UserLimitOverride = { ...(base || {}) };
+  for (const cur of ['USD', 'CDF'] as const) {
+    if (patch?.[cur] === undefined) continue;
+    const src = patch[cur] || {};
+    const dst: Partial<CurrencyLimits> = { ...(out[cur] || {}) };
+    for (const f of ['minPerOperation', 'maxPerOperation', 'maxDailyPerUser'] as const) {
+      if (!(f in src)) continue;
+      const v = src[f];
+      if (v === null || v === '') dst[f] = null;
+      else if (Number.isFinite(Number(v)) && Number(v) >= 0) dst[f] = Number(v);
+    }
+    out[cur] = dst;
+  }
+  for (const flag of ['transfersEnabled', 'depositsEnabled', 'withdrawalsEnabled'] as const) {
+    if (patch?.[flag] === undefined) continue;
+    if (patch[flag] === null) delete out[flag];
+    else out[flag] = patch[flag] === true || patch[flag] === 'true';
+  }
+  if (patch?.note !== undefined) out.note = patch.note ? String(patch.note).slice(0, 500) : null;
+  return out;
+}
+
+/** Limites effectives d'un utilisateur = globales, puis surcharges utilisateur. */
+export function effectiveLimits(
+  global: OperationControls,
+  user: UserLimitOverride | null,
+): OperationControls {
+  if (!user) return global;
+  const merged: OperationControls = JSON.parse(JSON.stringify(global));
+  for (const cur of ['USD', 'CDF'] as const) {
+    const o = user[cur];
+    if (!o) continue;
+    for (const f of ['minPerOperation', 'maxPerOperation', 'maxDailyPerUser'] as const) {
+      if (o[f] !== undefined) merged.limits[cur][f] = o[f] as number | null;
+    }
+  }
+  // Un utilisateur peut être bloqué individuellement, jamais débloqué si l'opération est coupée pour tous
+  if (user.transfersEnabled === false) merged.transfersEnabled = false;
+  if (user.depositsEnabled === false) merged.depositsEnabled = false;
+  if (user.withdrawalsEnabled === false) merged.withdrawalsEnabled = false;
+  return merged;
+}

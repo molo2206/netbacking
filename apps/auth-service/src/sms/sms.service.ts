@@ -14,16 +14,10 @@ type SmsKind = 'OTP' | 'PASSWORD' | 'NOTIFICATION';
 
 @Injectable()
 export class SmsService {
-  // ✅ Fournisseur Dream Digital — configurable via DREAM_SMS_* dans le .env
-  //    (⚠️ ne PAS utiliser SMS_API_URL / SMS_SENDER : ce sont des valeurs d'exemple
-  //     d'un autre fournisseur déjà présentes dans le .env)
-  private readonly apiId = process.env.DREAM_SMS_API_ID || 'API42928758643';
-  private readonly apiPassword = process.env.DREAM_SMS_API_PASSWORD || '@@Accesfina!2026';
-  // ⚠️ Sender ID SMS : 11 caractères max et doit être enregistré chez le fournisseur.
-  //    "AccesFinance" fait 12 caractères.
-  private readonly sender = process.env.DREAM_SMS_SENDER || 'AccesPay';
-  private readonly apiUrl = process.env.DREAM_SMS_API_URL || 'https://api2.dream-digital.info/api/SendSMS';
-  // Journal des SMS dans audit_logs (entity = SMS) — consultable par l'admin
+  private readonly apiId = 'API42928758643';
+  private readonly apiPassword = '@@Accesfina!2026';
+  private readonly sender = 'AccessFinance';
+  private readonly apiUrl = 'https://papi.dream-digital.info/api/SendSms';
   private readonly logEnabled =
     String(process.env.SMS_LOG_ENABLED ?? 'true').toLowerCase() !== 'false';
 

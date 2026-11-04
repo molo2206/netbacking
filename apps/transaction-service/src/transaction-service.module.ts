@@ -8,6 +8,7 @@ import { NotificationModule } from 'apps/notification-service/src/notification.m
 import { SmsService } from 'apps/auth-service/src/sms/sms.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BankModule } from './bank/bank.module';
+import { MailModule } from 'apps/auth-service/src/email/email.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { BankModule } from './bank/bank.module';
     I18nModule,
     NotificationModule,
     BankModule,          // ← fournit BankService + EncryptionService
+    MailModule,          // ← envoi du relevé PDF par email
   ],
   controllers: [TransactionServiceController],
   providers: [

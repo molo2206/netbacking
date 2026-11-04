@@ -115,5 +115,7 @@
   "bank_invalid_response": "The bank response is unreadable. Please try again.",
   "invalid_account_number": "Invalid account number: {{value}}. Provide an account number (e.g. 200200000007), not a transaction reference or ID.",
   "otp_too_many_attempts": "Too many incorrect codes. This code has been cancelled: start the transfer again to receive a new code.",
-  "otp_invalid_attempts_left": "Incorrect OTP code. You have {{remaining}} attempt(s) left."
+  "otp_invalid_attempts_left": "Incorrect OTP code. You have {{remaining}} attempt(s) left.",
+  "transfer_sent_sms": "AccesFinance: Hello {{firstName}}, you sent {{amount}} {{currency}} to {{receiverName}} (account {{receiverAccountNumber}}). Ref: {{reference}}. Balance: {{balance}} {{currency}}.",
+  "transfer_received_sms": "AccesFinance: Hello {{firstName}}, you received {{amount}} {{currency}} from {{senderName}} on your account {{accountNumber}}. Ref: {{reference}}."
 }

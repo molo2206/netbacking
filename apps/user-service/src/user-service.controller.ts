@@ -19,6 +19,8 @@ import { AdminSecurityService } from './admin/admin-security.service';
 import type { AdminActionInput } from './admin/admin-security.service';
 import { OperationControlsService } from './admin/operation-controls.service';
 import { AdminMonitoringService } from './admin/admin-monitoring.service';
+import { AdminStatsService } from './admin/admin-stats.service';
+import { UserNotificationsService } from './account/user-notifications.service';
 
 @Controller()
 export class UserServiceController {
@@ -28,7 +30,78 @@ export class UserServiceController {
     private readonly adminSecurity: AdminSecurityService,
     private readonly operationControls: OperationControlsService,
     private readonly adminMonitoring: AdminMonitoringService,
+    private readonly adminStats: AdminStatsService,
+    private readonly userNotifications: UserNotificationsService,
   ) { }
+
+  // ==================== NOTIFICATIONS DE L'UTILISATEUR ====================
+
+  @MessagePattern('notifications.list')
+  async notificationsList(@Payload() data: { userId: string; page?: number; limit?: number; unreadOnly?: boolean }) {
+    try { return await this.userNotifications.list(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('notifications.unreadCount')
+  async notificationsUnreadCount(@Payload() data: { userId: string }) {
+    try { return await this.userNotifications.unreadCount(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('notifications.markSeen')
+  async notificationsMarkSeen(@Payload() data: { notificationId: string; userId: string }) {
+    try { return await this.userNotifications.markSeen(data); } catch (e) { throw this.toRpcError(e, 404); }
+  }
+
+  @MessagePattern('notifications.markAllSeen')
+  async notificationsMarkAllSeen(@Payload() data: { userId: string }) {
+    try { return await this.userNotifications.markAllSeen(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('notifications.delete')
+  async notificationsDelete(@Payload() data: { notificationId: string; userId: string }) {
+    try { return await this.userNotifications.remove(data); } catch (e) { throw this.toRpcError(e, 404); }
+  }
+
+  @MessagePattern('admin.notifications.send')
+  async adminSendNotification(@Payload() data: any) {
+    try { return await this.userNotifications.adminSend(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('delete_own_account')
+  async deleteOwnAccount(@Payload() data: { id: string; password: string; lang?: string; ipAddress?: string }) {
+    try { return await this.userNotifications.deleteOwnAccount(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  // ==================== ADMIN : STATISTIQUES ====================
+
+  @MessagePattern('admin.stats.users')
+  async adminStatsUsers(@Payload() data: any) {
+    try { return await this.adminStats.usersByPlatform(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.stats.transactions')
+  async adminStatsTransactions(@Payload() data: any) {
+    try { return await this.adminStats.transactionVolumes(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.transactions.list')
+  async adminTransactionsList(@Payload() data: any) {
+    try { return await this.adminStats.listTransactions(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.transactions.csv')
+  async adminTransactionsCsv(@Payload() data: any) {
+    try { return await this.adminStats.transactionsCsv(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.monitoring.email')
+  async adminEmailStatus(@Payload() data: { verify?: boolean; lang?: string }) {
+    try { return await this.adminStats.emailStatus(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.monitoring.emailTest')
+  async adminEmailTest(@Payload() data: { to: string; adminId: string; lang?: string }) {
+    try { return await this.adminStats.sendTestEmail(data); } catch (e) { throw this.toRpcError(e); }
+  }
 
   // ==================== ADMIN : SÉCURITÉ DES COMPTES ====================
 
@@ -77,6 +150,21 @@ export class UserServiceController {
   @MessagePattern('admin.controls.update')
   async adminUpdateControls(@Payload() data: { adminId: string; patch: any; lang?: string; ipAddress?: string }) {
     try { return await this.operationControls.update(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.limits.get')
+  async adminGetUserLimits(@Payload() data: { userId: string; lang?: string }) {
+    try { return await this.operationControls.getUserLimits(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.limits.update')
+  async adminUpdateUserLimits(@Payload() data: any) {
+    try { return await this.operationControls.updateUserLimits(data); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.limits.reset')
+  async adminResetUserLimits(@Payload() data: any) {
+    try { return await this.operationControls.resetUserLimits(data); } catch (e) { throw this.toRpcError(e); }
   }
 
   @MessagePattern('controls.public')

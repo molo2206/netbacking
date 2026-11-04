@@ -65,3 +65,14 @@ export function mapBankAccounts(res: any, clientId?: string | null): BankAccount
     .map((acc) => mapBankAccount(acc, clientId))
     .filter((acc) => !!acc.accountNumber);
 }
+
+/**
+ * La banque renvoie le clientId même pour un client INCONNU, avec tous les autres
+ * champs à null. Un client est considéré comme existant s'il a au moins un nom,
+ * un surnom, un téléphone ou un email.
+ */
+export function hasBankClientIdentity(client: any): boolean {
+  if (!client || !client.clientId) return false;
+  return [client.firstName, client.lastName, client.nickName, client.phone, client.email]
+    .some((v) => v !== null && v !== undefined && String(v).trim() !== '');
+}

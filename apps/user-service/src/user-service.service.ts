@@ -25,6 +25,7 @@ import { BankService } from 'apps/transaction-service/src/bank/bank.service';
 import {
   BankAccountView,
   extractBankObject,
+  hasBankClientIdentity,
   mapBankAccount,
   mapBankAccounts,
 } from '../../../libs/common/src/bank/bank-accounts.util';
@@ -1304,6 +1305,15 @@ export class UserServiceService {
     // ✅ Comptes depuis l'API bancaire
     bankAccounts = await this.fetchClientAccounts(clientId, lang);
 
+    // ✅ La banque renvoie le clientId même pour un client INCONNU (tous les champs à null)
+    if (!hasBankClientIdentity(clientDetails) && bankAccounts.length === 0) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('client_not_found', lang),
+        statusCode: 404,
+      });
+    }
+
     // ✅ Récupérer le user local (info app)
     const user = await this.prisma.user.findFirst({
       where: { clientId: clientId },
@@ -1963,4 +1973,4 @@ export class UserServiceService {
   async healthCheck() {
     return { status: 'ok', service: 'user-service' };
   }
-}
+}

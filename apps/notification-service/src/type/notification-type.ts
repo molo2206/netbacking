@@ -1,5 +1,11 @@
 // apps/notification-service/src/type/notification-type.ts
 export enum NotificationType {
+  // ===== TYPES GÉNÉRIQUES (procédure standard AccesFinance) =====
+  TRANSACTION = 'transaction', // dépôt / retrait (data.operationType = deposit | withdrawal)
+  TRANSFER = 'transfer',       // transfert (data.direction = sent | received)
+  PAYMENT = 'payment',         // paiement (data.direction = sent | received)
+  SECURITY = 'security',       // sécurité du compte (data.event = …)
+
   // ===== TRANSACTIONS =====
   DEPOSIT_SUCCESS = 'deposit_success',
   CASHOUT_SUCCESS = 'cashout_success',
@@ -36,6 +42,10 @@ export enum NotificationType {
 
 // Helper pour les catégories
 export const NotificationCategory = {
+  [NotificationType.TRANSACTION]: 'transaction',
+  [NotificationType.TRANSFER]: 'transaction',
+  [NotificationType.PAYMENT]: 'transaction',
+  [NotificationType.SECURITY]: 'security',
   [NotificationType.DEPOSIT_SUCCESS]: 'transaction',
   [NotificationType.CASHOUT_SUCCESS]: 'transaction',
   [NotificationType.TRANSFER_SENT]: 'transaction',

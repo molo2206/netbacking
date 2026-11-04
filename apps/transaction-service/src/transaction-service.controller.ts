@@ -899,6 +899,17 @@ export class TransactionServiceController {
     catch (e) { throw this.toRpc(e, 404); }
   }
 
+  // ==================== RELEVÉ PDF ====================
+
+  @MessagePattern('transaction.statementPdf')
+  async statementPdf(@Payload() data: {
+    accountNumber: string; userId?: string; startDate?: string; endDate?: string;
+    lang?: string; sendEmail?: boolean; email?: string;
+  }) {
+    try { return await this.transactionService.generateStatementPdf(data); }
+    catch (e) { throw this.toRpc(e); }
+  }
+
   // ==================== ADMIN : SANTÉ API BANQUE ====================
 
   @MessagePattern('admin.monitoring.bankHealth')

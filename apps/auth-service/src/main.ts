@@ -1,4 +1,6 @@
 // main.ts - Auth Service
+// ✅ Charge le .env AVANT tout le reste (les services lisent process.env dès leur construction)
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { AuthServiceModule } from './auth-service.module';
