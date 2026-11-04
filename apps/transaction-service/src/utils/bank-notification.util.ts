@@ -80,7 +80,8 @@ export async function notifyBankOperation(
         senderName: counterparty?.name || counterparty?.accountNumber || '',
         senderAccountNumber: counterparty?.accountNumber || '',
       });
-      await deps.smsService.sendSms(String(user.phone).replace(/[^0-9+]/g, ''), smsText);
+      // Le numéro est normalisé par SmsService (format +243, numéros mobiles uniquement)
+      await deps.smsService.sendSms(String(user.phone), smsText);
     }
   } catch (err) {
     console.warn(`[notifyBankOperation] SMS ${kind} pour ${user.id} : ${err?.message || err}`);

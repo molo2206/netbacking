@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import { getSharedPrisma } from '../../../../libs/common/src/db/shared-prisma';
+import { checkSmsNumber, maskPhone } from '../../../../libs/common/src/utils/phone.util';
 
 interface SmsResponse {
   status: string;
@@ -70,33 +71,26 @@ export class SmsService {
   // ─────────────────────────── envoi ───────────────────────────
 
   async sendSms(phoneNumber: string, message: string): Promise<boolean> {
-    let cleanPhone = String(phoneNumber || '').replace(/[^0-9]/g, '');
+    // ✅ Normalisation unique (libs/common/src/utils/phone.util.ts) :
+    //    0979…, 979…, 243…, +243…, 00243…, +243 0979…, « 0979… / 0812… »
+    //    → 243979649404 ; numéros vides, factices ou non mobiles refusés
+    const check = checkSmsNumber(phoneNumber);
+    let cleanPhone = check.number || check.international.replace('+', '') || String(phoneNumber || '').replace(/[^0-9]/g, '');
 
     try {
-      // S'assurer que le numéro commence par 243
-      if (!cleanPhone.startsWith('243')) {
-        if (cleanPhone.startsWith('0')) {
-          cleanPhone = `243${cleanPhone.substring(1)}`;
-        } else {
-          cleanPhone = `243${cleanPhone}`;
-        }
-      }
-
-      // S'assurer que le numéro fait exactement 12 chiffres
-      if (cleanPhone.length !== 12) {
-        console.error(
-          `❌ Numéro invalide: ${cleanPhone} (doit faire 12 chiffres)`,
-        );
-        void this.logSms({ phone: cleanPhone, message, success: false, error: 'Numéro invalide' });
+      if (!check.ok) {
+        console.error(`❌ SMS non envoyé : ${check.reason}`);
+        void this.logSms({ phone: cleanPhone || 'inconnu', message, success: false, error: check.reason });
         return false;
       }
+      cleanPhone = check.number;
 
       // Construire l'URL
       const url = `${this.apiUrl}?api_id=${this.apiId}&api_password=${this.apiPassword}&sms_type=T&encoding=T&sender_id=${this.sender}&phonenumber=${cleanPhone}&textmessage=${encodeURIComponent(message)}`;
 
       // ✅ Les logs ne contiennent ni le mot de passe API, ni le contenu (OTP, mot de passe…)
       console.log(
-        `📤 Envoi SMS à ${cleanPhone} (${message.length} caractères, ${this.detectKind(message)})`,
+        `📤 Envoi SMS à ${maskPhone(cleanPhone)} (${message.length} caractères, ${this.detectKind(message)})`,
       );
 
       const response = await axios.get<SmsResponse>(url, {

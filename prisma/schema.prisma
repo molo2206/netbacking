@@ -77,8 +77,8 @@ model User {
 model Session {
   id           String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
   userId       String    @db.VarChar(36)
-  token        String    @unique(map: "token") @db.VarChar(255)
-  refreshToken String    @unique(map: "refreshToken") @db.VarChar(255)
+  token        String    @unique(map: "token") @db.VarChar(768)
+  refreshToken String    @unique(map: "refreshToken") @db.VarChar(768)
   expiresAt    DateTime  @db.DateTime(0)
   ipAddress    String?   @db.VarChar(45)
   userAgent    String?   @db.Text

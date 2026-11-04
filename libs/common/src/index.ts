@@ -5,3 +5,4 @@ export * from './bank/bank-accounts.util';
 export * from './utils/phone.util';
 export * from './utils/platform.util';
 export * from './branding/brand';
+export * from './bank/bank-filters';

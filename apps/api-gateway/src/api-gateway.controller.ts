@@ -2620,10 +2620,73 @@ export class ApiGatewayController {
     );
   }
 
-  // Liste des transactions (route standard) + résumé des volumes
+  // ═════════════════════════════════════════════════════════════════════
+  // ADMIN — TOUTES LES TRANSACTIONS BANCAIRES (tous les clients, tous les comptes)
+  //   Filtres : from, to (AAAA-MM-JJ, défaut 30 derniers jours, max 366 j),
+  //   clientId, userId, accountNumber, type, movement (CREDIT|DEBIT), status,
+  //   currency (USD|CDF), minAmount, maxAmount, search,
+  //   sort (date_desc|date_asc|amount_desc|amount_asc), page, limit,
+  //   refresh=true (ignorer le cache de 2 min)
+  // ═════════════════════════════════════════════════════════════════════
+
+  private bankTransactionFilters(query: any, lang?: string) {
+    return {
+      from: query.from || query.startDate,
+      to: query.to || query.endDate,
+      clientId: query.clientId,
+      userId: query.userId,
+      accountNumber: query.accountNumber,
+      type: query.type,
+      movement: query.movement,
+      status: query.status,
+      currency: query.currency,
+      minAmount: query.minAmount,
+      maxAmount: query.maxAmount,
+      search: query.search,
+      sort: query.sort,
+      refresh: query.refresh === 'true',
+      page: this.toInt(query.page, 1),
+      limit: this.toInt(query.limit, 20),
+      lang: lang || 'fr',
+    };
+  }
+
   @Get('admin/transactions')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async adminListTransactions(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendTransactionMessage(
+      'admin.bankTransactions.list', this.bankTransactionFilters(query, langHeader),
+      'Échec de la récupération des transactions', HttpStatus.INTERNAL_SERVER_ERROR,
+      300000,
+    );
+  }
+
+  @Get('admin/transactions/export')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminExportTransactions(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Res() res: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    const result = await this.sendTransactionMessage(
+      'admin.bankTransactions.csv', this.bankTransactionFilters(query, langHeader),
+      'Failed to export transactions', HttpStatus.INTERNAL_SERVER_ERROR,
+      300000,
+    );
+    return this.sendCsv(res, result);
+  }
+
+  // Opérations faites via l'application (avec la plateforme MOBILE / WEB)
+  @Get('admin/transactions/app')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminListAppTransactions(
     @CurrentUser() currentUser: any,
     @Query() query: any,
     @Headers('lang') langHeader?: string,
@@ -2635,9 +2698,9 @@ export class ApiGatewayController {
     );
   }
 
-  @Get('admin/transactions/export')
+  @Get('admin/transactions/app/export')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
-  async adminExportTransactions(
+  async adminExportAppTransactions(
     @CurrentUser() currentUser: any,
     @Query() query: any,
     @Res() res: any,

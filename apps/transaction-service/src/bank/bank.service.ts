@@ -3,6 +3,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import * as crypto from 'crypto';
 import { EncryptionService } from './encryption.service';
+import {
+  BankFilterError,
+  normalizeBankLimit,
+  normalizeBankMovement,
+  normalizeBankPage,
+  normalizeBankStatus,
+  normalizeBankType,
+} from '../../../../libs/common/src/bank/bank-filters';
 
 export type BankPlatform = 'Mobile' | 'Online';
 
@@ -229,6 +237,14 @@ export class BankService {
         fr: 'Cette opération a déjà été traitée (requestId dupliqué).',
         en: 'This operation has already been processed (duplicate requestId).',
       },
+      bank_bad_request: {
+        fr: 'Requête refusée par la banque : paramètre manquant ou invalide.',
+        en: 'Request rejected by the bank: missing or invalid parameter.',
+      },
+      bank_not_found: {
+        fr: 'Élément introuvable à la banque (client, compte ou transaction).',
+        en: 'Not found at the bank (client, account or transaction).',
+      },
       bank_business_rule: {
         fr: 'Opération refusée par la banque (règle métier).',
         en: 'Operation rejected by the bank (business rule).',
@@ -292,9 +308,31 @@ export class BankService {
           details: errBody,
         });
       }
+      // ✅ 400 / 404 : message de la banque (format du document : { error, code, message })
+      //    ou texte brut renvoyé par le service .asmx
+      const bankMessage =
+        (errBody && typeof errBody === 'object' && (errBody.message || errBody.error)) ||
+        (typeof errBody === 'string' && errBody.trim() ? errBody.trim().slice(0, 200) : null);
+
+      if (response.status === 400) {
+        throw new RpcException({
+          status: 'error',
+          message: bankMessage || this.translate('bank_bad_request', lang),
+          statusCode: 400,
+          details: errBody,
+        });
+      }
+      if (response.status === 404) {
+        throw new RpcException({
+          status: 'error',
+          message: bankMessage || this.translate('bank_not_found', lang),
+          statusCode: 404,
+          details: errBody,
+        });
+      }
       throw new RpcException({
         status: 'error',
-        message: errBody?.message || this.translate('bank_unavailable', lang),
+        message: (errBody && typeof errBody === 'object' && errBody.message) || this.translate('bank_unavailable', lang),
         statusCode: response.status,
         details: errBody,
       });
@@ -520,21 +558,39 @@ export class BankService {
     platform?: BankPlatform;
   }): Promise<any> {
     const lang = params.lang || 'fr';
+    // ✅ requestId unique à CHAQUE appel (le document exige un nouveau requestId par page)
     const reqId = params.requestId || this.generateRequestId();
+
+    // ✅ Filtres validés selon le document de la banque (section 10) :
+    //    page > 0, 0 < limit <= 100, type / movement / status dans les listes officielles
+    let type: string | undefined;
+    let movement: string | undefined;
+    let status: string | undefined;
+    try {
+      type = normalizeBankType(params.type);
+      movement = normalizeBankMovement(params.movement);
+      status = normalizeBankStatus(params.status);
+    } catch (err) {
+      if (err instanceof BankFilterError) {
+        throw new RpcException({ status: 'error', message: err.message, statusCode: 400 });
+      }
+      throw err;
+    }
+
     // ⚠️ Service .asmx (ASP.NET) : TOUS les paramètres de la méthode doivent être
     // présents dans l'URL, même vides, sinon 500 "Missing parameter: xxx".
     // → on envoie toujours page, limit, startDate, endDate, type, movement, status.
     const range = this.resolveDateRange(params.startDate, params.endDate);
     const qs = new URLSearchParams({
-      accountNumber: params.accountNumber.trim(),
+      accountNumber: String(params.accountNumber || '').trim(),
       requestId: reqId,
-      page: String(params.page ?? 1),
-      limit: String(params.limit ?? 10),
+      page: String(normalizeBankPage(params.page)),
+      limit: String(normalizeBankLimit(params.limit)),
       startDate: range.startDate,
       endDate: range.endDate,
-      type: params.type ?? '',
-      movement: params.movement ?? '',
-      status: params.status ?? '',
+      type: type ?? '',
+      movement: movement ?? '',
+      status: status ?? '',
     });
     return this.callBankApi(
       `GetAccountTransactions?${qs.toString()}`,
@@ -550,7 +606,9 @@ export class BankService {
     platform: BankPlatform = 'Mobile',
     requestId?: string,
   ): Promise<any> {
-    // ⚠️ .asmx : requestId obligatoire, sinon 500 "Missing parameter: requestId"
+    // ⚠️ Le document de la banque (section 11) indique que GetTransactionDetails
+    //    n'accepte PAS de requestId, mais le service UAT répond
+    //    500 "Missing parameter: requestId" sans lui → on l'envoie quand même.
     const reqId = requestId || this.generateRequestId();
     const endpoint = `GetTransactionDetails?transactionId=${encodeURIComponent(
       String(transactionId).trim(),

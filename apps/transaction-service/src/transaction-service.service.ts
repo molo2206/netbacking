@@ -18,6 +18,8 @@ import { I18nService } from '../../../libs/common/src/i18n/i18n.service';
 import { NotificationHelper } from 'apps/notification-service/src/helpers/NotificationHelper';
 import { NotificationType } from 'apps/notification-service/src/type/notification-type';
 import { notifyBankOperation, BankNotificationDeps } from './utils/bank-notification.util';
+import { normalizeBankLimit } from '../../../libs/common/src/bank/bank-filters';
+import { normalizePhoneToInternational as normalizePhone, maskPhone } from '../../../libs/common/src/utils/phone.util';
 import { MailService } from 'apps/auth-service/src/email/email.service';
 import { getLogoDataUri } from '../../../libs/common/src/branding/brand';
 import {
@@ -354,7 +356,8 @@ export class TransactionServiceService {
     endDate?: string;
     lang?: string;
   }): Promise<{ transactions: any[]; total: number }> {
-    const pageSize = parseInt(process.env.BANK_HISTORY_PAGE_SIZE || '100', 10);
+    // Document banque : limit <= 100
+    const pageSize = normalizeBankLimit(process.env.BANK_HISTORY_PAGE_SIZE || '100');
     const maxPages = parseInt(process.env.BANK_HISTORY_MAX_PAGES || '20', 10);
 
     const fetchPage = (page: number) =>
@@ -546,43 +549,11 @@ export class TransactionServiceService {
   }
 
   /**
- * Normalise un numéro de téléphone au format international.
- * Ex: "971081108" → "+243971081108" (RDC par défaut)
- */
-  private normalizePhoneToInternational(
-    phone: string,
-    defaultCountryCode = '243',
-  ): string {
-    if (!phone) return '';
-
-    let cleaned = String(phone).trim().replace(/[\s\-().]/g, '');
-
-    // Déjà international avec +
-    if (cleaned.startsWith('+')) {
-      return '+' + cleaned.substring(1).replace(/[^0-9]/g, '');
-    }
-
-    // Nettoyer les caractères non numériques
-    cleaned = cleaned.replace(/[^0-9]/g, '');
-    if (!cleaned) return '';
-
-    // Commence par 00 (ex: 00243971081108)
-    if (cleaned.startsWith('00')) {
-      return '+' + cleaned.substring(2);
-    }
-
-    // Commence déjà par le code pays sans + (ex: 243971081108)
-    if (cleaned.startsWith(defaultCountryCode)) {
-      return '+' + cleaned;
-    }
-
-    // Commence par 0 (ex: 0971081108)
-    if (cleaned.startsWith('0')) {
-      return '+' + defaultCountryCode + cleaned.substring(1);
-    }
-
-    // Sinon, on ajoute le code pays
-    return '+' + defaultCountryCode + cleaned;
+   * Normalise un numéro au format international (+243XXXXXXXXX).
+   * ✅ Utilise l'utilitaire commun (libs/common/src/utils/phone.util.ts).
+   */
+  private normalizePhoneToInternational(phone: string, defaultCountryCode = '243'): string {
+    return normalizePhone(phone, defaultCountryCode);
   }
 
   // ========================= TRANSFERT (BANQUE) =========================
@@ -677,8 +648,8 @@ export class TransactionServiceService {
               currency: data.currency || 'USD',
               receiverAccountNumber: data.receiverAccountNumber,
             });
-            await this.smsService.sendSms(clientPhone, smsText);
-            this.logger.log(`[Transfer] OTP SMS envoyé à ${clientPhone}`);
+            const sent = await this.smsService.sendSms(clientPhone, smsText);
+            this.logger.log(`[Transfer] OTP SMS ${sent ? 'envoyé' : 'NON envoyé'} à ${maskPhone(clientPhone)}`);
           } catch (err) {
             this.logger.error(`[Transfer] SMS OTP échoué: ${err.message}`);
           }

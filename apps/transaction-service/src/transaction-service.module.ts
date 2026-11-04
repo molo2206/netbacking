@@ -9,6 +9,8 @@ import { SmsService } from 'apps/auth-service/src/sms/sms.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BankModule } from './bank/bank.module';
 import { MailModule } from 'apps/auth-service/src/email/email.module';
+import { AdminBankTransactionsController } from './admin/admin-bank-transactions.controller';
+import { AdminBankTransactionsService } from './admin/admin-bank-transactions.service';
 
 @Module({
   imports: [
@@ -18,9 +20,10 @@ import { MailModule } from 'apps/auth-service/src/email/email.module';
     BankModule,          // ← fournit BankService + EncryptionService
     MailModule,          // ← envoi du relevé PDF par email
   ],
-  controllers: [TransactionServiceController],
+  controllers: [TransactionServiceController, AdminBankTransactionsController],
   providers: [
     TransactionServiceService,
+    AdminBankTransactionsService, // ← admin : toutes les transactions bancaires
     PrismaService,
     SmsService,
   ],

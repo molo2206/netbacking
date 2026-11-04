@@ -119,8 +119,10 @@ Codes d'erreur renvoyés aux apps : `MAINTENANCE`, `OPERATION_DISABLED_TRANSFER`
 | GET | `admin/reports/operations/export` | **CSV** des opérations (mêmes filtres) |
 | GET | `admin/stats/users` | Utilisateurs **MOBILE / WEB** : inscrits, par statut, nouveaux, actifs sur la période, connexions, en ligne maintenant, appareils prêts pour les notifications (`?from=&to=`) |
 | GET | `admin/stats/transactions` | **Volumes** : par devise, par type, par plateforme, évolution, top utilisateurs (filtres ci-dessous) |
-| GET | `admin/transactions` | **Liste** paginée des transactions + résumé des volumes (mêmes filtres) |
-| GET | `admin/transactions/export` | **CSV** des transactions (mêmes filtres) |
+| GET | `admin/transactions` | **Toutes les transactions bancaires** de tous les clients (tous les comptes), avec volumes par devise / type / mouvement — filtres : `from`, `to`, `clientId`, `userId`, `accountNumber`, `type`, `movement`, `status`, `currency`, `minAmount`, `maxAmount`, `search`, `sort`, `page`, `limit`, `refresh=true` |
+| GET | `admin/transactions/export` | **CSV** de toutes les transactions bancaires (mêmes filtres) |
+| GET | `admin/transactions/app` | Opérations faites via l'application (avec plateforme MOBILE / WEB) |
+| GET | `admin/transactions/app/export` | CSV des opérations faites via l'application |
 | POST | `admin/notifications/send` | Notification à un utilisateur (`userId`) ou à un groupe (`audience`: `ALL`, `MOBILE`, `WEB` — SUPER_ADMIN) |
 | GET | `admin/monitoring/email` | État de l'envoi d'emails (config, dernière erreur SMTP) — `?verify=false` pour ne pas tester la connexion |
 | POST | `admin/monitoring/email/test` | Envoie un email de test — body `{ "to": "adresse@exemple.com" }` |

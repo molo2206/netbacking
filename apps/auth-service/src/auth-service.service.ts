@@ -662,6 +662,27 @@ export class AuthServiceService {
         });
       }
 
+      // ✅ Administrateurs : connexion UNIQUEMENT avec l'adresse email
+      //    (pas de code client ni de téléphone pour ADMIN / SUPER_ADMIN)
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        const typed = String(identifier || '').trim().toLowerCase();
+        const adminEmail = String(user.email || '').trim().toLowerCase();
+        if (!adminEmail || typed !== adminEmail) {
+          await this.logFailedLoginAttempt(
+            user.id,
+            identifier,
+            ipAddress || null,
+            dto.userAgent || null,
+          );
+          throw new BadRequestException({
+            status: 'error',
+            message: this.i18nService.translate('admin_login_email_only', lang),
+            statusCode: 400,
+            code: 'ADMIN_LOGIN_EMAIL_ONLY',
+          });
+        }
+      }
+
       // ✅ Compte en attente d'approbation / refusé : message explicite,
       //    et AUCUN compteur d'échecs (sinon le verrouillage pourrait le réactiver)
       if (user.status === users_status.PENDING_VERIFICATION) {
