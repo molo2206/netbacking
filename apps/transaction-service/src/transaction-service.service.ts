@@ -19,6 +19,7 @@ import { NotificationHelper } from 'apps/notification-service/src/helpers/Notifi
 import { NotificationType } from 'apps/notification-service/src/type/notification-type';
 import { notifyBankOperation, BankNotificationDeps } from './utils/bank-notification.util';
 import { normalizeBankLimit } from '../../../libs/common/src/bank/bank-filters';
+import { normalizePlatform } from '../../../libs/common/src/utils/platform.util';
 import { normalizePhoneToInternational as normalizePhone, maskPhone } from '../../../libs/common/src/utils/phone.util';
 import { MailService } from 'apps/auth-service/src/email/email.service';
 import { getLogoDataUri } from '../../../libs/common/src/branding/brand';
@@ -36,6 +37,7 @@ import {
   loadUserLimits,
   startOfLocalDay,
 } from '../../../libs/common/src/settings/operation-controls';
+import { writeAudit } from '../../../libs/common/src/audit/write-audit';
 // 👇 Import du service bancaire (adapte le chemin à ta structure)
 
 @Injectable()
@@ -242,6 +244,16 @@ export class TransactionServiceService {
     }
   }
 
+  /**
+   * Canal de l'opération pour les rapports : MOBILE (Mobile Banking) / WEB (Net Banking).
+   * Fourni par l'API Gateway ; à défaut, déduit de la plateforme bancaire.
+   */
+  private channelOf(data: { channel?: string; platform?: string }): string {
+    const c = normalizePlatform(data.channel);
+    if (c !== 'UNKNOWN') return c;
+    return data.platform ? normalizePlatform(data.platform) : 'UNKNOWN';
+  }
+
   private async logAudit(
     userId: string | null,
     action: string,
@@ -250,7 +262,7 @@ export class TransactionServiceService {
     entityId: string | null = null,
   ) {
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: userId || undefined,
           action,
@@ -573,6 +585,9 @@ export class TransactionServiceService {
     lang?: string;
     saveBeneficiary?: boolean;
     otpCode?: string;   // ✅ seule protection du transfert (le PIN n'est plus demandé)
+    forceNewOtp?: boolean; // route /transactions/transfer/request-otp
+    client?: string;       // mobile / web (logs)
+    channel?: string;      // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     const lang = data.lang || 'fr';
     // ✅ Tout transfert réussi crée/met à jour le bénéficiaire (le destinataire),
@@ -598,7 +613,16 @@ export class TransactionServiceService {
       }
 
       // ─── 0-bis. ✅ OTP (même logique que register) ────────────────
-      const otpProvided = data.otpCode && String(data.otpCode).trim() !== '';
+      // Un OTP valide = exactement 6 chiffres. Toute autre valeur envoyée par
+      // une app (PIN à 4 chiffres, "0", "null", espace…) = pas de code → on envoie l'OTP.
+      const otpValue = String(data.otpCode ?? '').replace(/\s/g, '');
+      const otpProvided = !data.forceNewOtp && /^\d{6}$/.test(otpValue);
+      data.otpCode = otpProvided ? otpValue : undefined;
+      this.logger.log(
+        `[Transfer] user=${data.initiatedBy} client=${data.client || 'inconnu'} ` +
+        `otp=${otpProvided ? 'fourni' : otpValue ? `ignoré (format « ${otpValue.length} car. »)` : 'absent'} ` +
+        `phone=${maskPhone(user.phone)}`,
+      );
 
       // Identifiant OTP : phone normalisé, sinon email, sinon clientId
       const otpIdentifier =
@@ -611,6 +635,22 @@ export class TransactionServiceService {
 
       // ── Si OTP absent → générer + envoyer + retourner requiresOtp ──
       if (!otpProvided) {
+        // Anti-spam SMS : un seul envoi toutes les 30 s par utilisateur
+        const cooldownMs = parseInt(process.env.TRANSFER_OTP_RESEND_SECONDS || '30', 10) * 1000;
+        const recent = await this.prisma.otp.findFirst({
+          where: { email: otpIdentifier, isUsed: false, expiresAt: { gt: new Date() } },
+          orderBy: { expiresAt: 'desc' },
+        });
+        if (recent?.expiresAt && recent.expiresAt.getTime() - (10 * 60 * 1000 - cooldownMs) > Date.now()) {
+          this.logger.log(`[Transfer] OTP déjà envoyé il y a moins de ${cooldownMs / 1000} s, pas de renvoi`);
+          return {
+            requiresOtp: true,
+            message: this.i18nService.translate('otp_sent', lang),
+            phone: maskPhone(user.phone),
+            expiresIn: Math.round((recent.expiresAt.getTime() - Date.now()) / 1000),
+          };
+        }
+
         // Désactiver anciens OTP
         await this.prisma.otp.updateMany({
           where: {
@@ -660,6 +700,8 @@ export class TransactionServiceService {
         return {
           requiresOtp: true,
           message: this.i18nService.translate('otp_sent', lang),
+          phone: maskPhone(user.phone),
+          expiresIn: 600,
         };
       }
 
@@ -676,7 +718,7 @@ export class TransactionServiceService {
       if (!otpRecord) {
         // ✅ Anti force brute : 5 codes faux en 10 min → le code en cours est annulé
         const maxAttempts = parseInt(process.env.TRANSFER_OTP_MAX_ATTEMPTS || '5', 10);
-        await this.logAudit(data.initiatedBy, 'TRANSFER_OTP_FAILED', { identifier: otpIdentifier }, 'OTP');
+        await this.logAudit(data.initiatedBy, 'TRANSFER_OTP_FAILED', { identifier: otpIdentifier, channel: this.channelOf(data) }, 'OTP');
         const failures = await this.prisma.auditLog.count({
           where: {
             userId: data.initiatedBy,
@@ -775,6 +817,7 @@ export class TransactionServiceService {
         fees: bankData?.fees ?? 0,
         currency,
         platform: data.platform || 'Mobile',
+        channel: this.channelOf(data),
         status: bankData?.status ?? 'SUCCESS',
         bankTransactionId: bankData?.transactionId,
         bankReference: bankData?.reference,
@@ -889,6 +932,7 @@ export class TransactionServiceService {
     initiatedBy?: string;
     lang?: string;
     platform?: BankPlatform;
+    channel?: string;      // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     const lang = data.lang || 'fr';
 
@@ -930,6 +974,7 @@ export class TransactionServiceService {
           amount: data.amount,
           currency,
           platform: data.platform || 'Mobile',
+          channel: this.channelOf(data),
           status: bankData?.status ?? 'SUCCESS',
           bankTransactionId: bankData?.transactionId ?? null,
           bankReference: bankData?.reference ?? null,
@@ -992,6 +1037,7 @@ export class TransactionServiceService {
     initiatedBy?: string;
     lang?: string;
     platform?: BankPlatform;
+    channel?: string;      // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     const lang = data.lang || 'fr';
 
@@ -1033,6 +1079,7 @@ export class TransactionServiceService {
           amount: data.amount,
           currency,
           platform: data.platform || 'Mobile',
+          channel: this.channelOf(data),
           status: bankData?.status ?? 'SUCCESS',
           bankTransactionId: bankData?.transactionId ?? null,
           bankReference: bankData?.reference ?? null,

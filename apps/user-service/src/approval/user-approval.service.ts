@@ -36,6 +36,7 @@ import {
   normalizePhoneToInternational,
   phoneVariants,
 } from '../../../../libs/common/src/utils/phone.util';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
 
 export interface AdminCreateUserInput {
   clientId?: string | null;
@@ -122,7 +123,7 @@ export class UserApprovalService {
     ipAddress?: string | null,
   ) {
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: actorId || undefined,
           action,

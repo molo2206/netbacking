@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import { getSharedPrisma } from '../../../../libs/common/src/db/shared-prisma';
 import { checkSmsNumber, maskPhone } from '../../../../libs/common/src/utils/phone.util';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
 
 interface SmsResponse {
   status: string;
@@ -17,7 +18,7 @@ type SmsKind = 'OTP' | 'PASSWORD' | 'NOTIFICATION';
 export class SmsService {
   private readonly apiId = 'API42928758643';
   private readonly apiPassword = '@@Accesfina!2026';
-  private readonly sender = 'AccesPay';
+  private readonly sender = 'AccessFinance';
   private readonly apiUrl = 'https://papi.dream-digital.info/api/SendSms';
   private readonly logEnabled =
     String(process.env.SMS_LOG_ENABLED ?? 'true').toLowerCase() !== 'false';
@@ -47,7 +48,7 @@ export class SmsService {
     if (!this.logEnabled) return;
     try {
       const kind = this.detectKind(entry.message);
-      await getSharedPrisma().auditLog.create({
+      await writeAudit(getSharedPrisma(), {
         data: {
           action: entry.success ? 'SMS_SENT' : 'SMS_FAILED',
           entity: 'SMS',

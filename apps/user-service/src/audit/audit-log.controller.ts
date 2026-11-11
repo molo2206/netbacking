@@ -50,6 +50,11 @@ export class AuditLogController {
     try { return await this.auditLogService.stats(data || {}); } catch (e) { throw this.toRpc(e); }
   }
 
+  @MessagePattern('get_activity_logs')
+  async getActivityLogs(@Payload() data: any) {
+    try { return await this.auditLogService.activityList(data || {}); } catch (e) { throw this.toRpc(e); }
+  }
+
   @MessagePattern('delete_audit_log_by_id')
   async deleteAuditLog(@Payload() data: { id: string; adminId?: string }) {
     try { return await this.auditLogService.deleteById(data); } catch (e) { throw this.toRpc(e); }

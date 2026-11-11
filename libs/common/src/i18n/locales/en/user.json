@@ -46,5 +46,14 @@
   "checkbook_status_retrieved": "Checkbook status retrieved successfully",
   "checkbook_status_failed": "Unable to retrieve checkbook status",
   "checkbook_blocked": "Checkbook blocked successfully",
-  "checkbook_block_failed": "Failed to block the checkbook"
+  "checkbook_block_failed": "Failed to block the checkbook",
+  "role_invalid": "Invalid role: {{role}}. Accepted roles: {{allowed}}.",
+  "role_required": "Role is required.",
+  "cannot_change_own_role": "You cannot change your own role.",
+  "role_change_super_admin_only": "Only a super administrator can change a user's role.",
+  "last_super_admin": "Not allowed: this user is the last active super administrator. Appoint another super administrator first.",
+  "role_unchanged": "The user already has the role {{role}}.",
+  "role_updated_success": "Role changed: {{oldRole}} → {{newRole}}.",
+  "role_admin_without_email": "Warning: this administrator has no email address and cannot sign in to the administration until one is set.",
+  "role_admin_without_client_id": "Warning: this administrator has no client code and cannot sign in to the mobile app or Net Banking."
 }

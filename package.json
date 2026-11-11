@@ -45,7 +45,7 @@
     "class-validator": "^0.15.1",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
-    "firebase-admin": "^14.1.0",
+    "firebase-admin": "^13.8.0",
     "handlebars": "^4.7.9",
     "helmet": "^8.2.0",
     "nest-winston": "^1.10.2",

@@ -29,6 +29,8 @@ import {
   mapBankAccount,
   mapBankAccounts,
 } from '../../../libs/common/src/bank/bank-accounts.util';
+import { writeAudit } from '../../../libs/common/src/audit/write-audit';
+import { clearSessionCheckCache } from '../../../libs/common/src/security/session-validator';
 
 @Injectable()
 export class UserServiceService {
@@ -51,7 +53,7 @@ export class UserServiceService {
     ipAddress: string | null,
   ) {
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: userId || undefined,
           action,
@@ -373,6 +375,114 @@ export class UserServiceService {
     return {
       message: this.i18nService.translate('user_updated_success', lang),
       data: this.toResponse(user),
+    };
+  }
+
+  // ========================= UPDATE USER ROLE =========================
+  /**
+   * Modification du rôle d'un utilisateur (route PATCH /users/:id/role).
+   * Règles : demandeur SUPER_ADMIN (revérifié en base), rôle connu, pas son propre rôle,
+   * on ne retire pas le rôle au DERNIER super administrateur actif.
+   * Le nouveau rôle s'applique sans reconnexion (rôle relu en base à chaque requête).
+   */
+  async updateUserRole(params: { id: string; role: string; requesterId: string; lang?: string; reason?: string }) {
+    const lang = params.lang || 'fr';
+    const id = String(params.id || '').trim();
+    const raw = String(params.role || '').trim();
+    if (!raw) {
+      throw new RpcException({ status: 'error', message: this.i18nService.translate('role_required', lang), statusCode: 400 });
+    }
+
+    const allowed = Object.values(UserRole) as string[];
+    const newRole = raw.toUpperCase().replace(/[\s-]+/g, '_');
+    if (!allowed.includes(newRole)) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('role_invalid', lang, { role: raw, allowed: allowed.join(', ') }),
+        statusCode: 400,
+      });
+    }
+
+    // Revérification du demandeur en base (le rôle du jeton peut être ancien)
+    const requester = params.requesterId
+      ? await this.prisma.user.findUnique({ where: { id: params.requesterId }, select: { id: true, role: true, deletedAt: true } })
+      : null;
+    if (!requester || requester.deletedAt || requester.role !== UserRole.SUPER_ADMIN) {
+      throw new RpcException({
+        status: 'error',
+        message: this.i18nService.translate('role_change_super_admin_only', lang),
+        statusCode: 403,
+      });
+    }
+    if (requester.id === id) {
+      throw new RpcException({ status: 'error', message: this.i18nService.translate('cannot_change_own_role', lang), statusCode: 403 });
+    }
+
+    const target = await this.prisma.user.findUnique({ where: { id } });
+    if (!target || target.deletedAt) {
+      throw new RpcException({ status: 'error', message: this.i18nService.translate('user_not_found', lang), statusCode: 404 });
+    }
+
+    const oldRole = String(target.role || UserRole.USER);
+    if (oldRole === newRole) {
+      return {
+        message: this.i18nService.translate('role_unchanged', lang, { role: newRole }),
+        data: this.toResponse(target),
+      };
+    }
+
+    // Toujours au moins un super administrateur actif
+    if (oldRole === UserRole.SUPER_ADMIN) {
+      const others = await this.prisma.user.count({
+        where: { role: UserRole.SUPER_ADMIN, deletedAt: null, status: users_status.ACTIVE, id: { not: id } },
+      });
+      if (others === 0) {
+        throw new RpcException({ status: 'error', message: this.i18nService.translate('last_super_admin', lang), statusCode: 409 });
+      }
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { role: newRole as UserRole },
+    });
+
+    try {
+      await writeAudit(this.prisma, {
+        data: {
+          userId: requester.id,
+          userRole: requester.role,
+          action: 'USER_ROLE_CHANGED',
+          entity: 'USER',
+          entityId: id,
+          oldValue: JSON.stringify({ role: oldRole }),
+          newValue: JSON.stringify({ role: newRole }),
+          message: JSON.stringify({
+            targetUserId: id,
+            targetName: `${target.firstName || ''} ${target.lastName || ''}`.trim(),
+            targetClientId: target.clientId,
+            oldRole,
+            newRole,
+            reason: params.reason || null,
+          }),
+          level: 'WARN',
+        },
+      });
+    } catch (err) {
+      console.error('Audit USER_ROLE_CHANGED failed:', err);
+    }
+    clearSessionCheckCache();
+
+    // Connexion des administrateurs : e-mail (administration) et code client (applications)
+    const warnings: string[] = [];
+    if (newRole === UserRole.ADMIN || newRole === UserRole.SUPER_ADMIN) {
+      if (!updated.email) warnings.push(this.i18nService.translate('role_admin_without_email', lang));
+      if (!updated.clientId) warnings.push(this.i18nService.translate('role_admin_without_client_id', lang));
+    }
+
+    return {
+      message: this.i18nService.translate('role_updated_success', lang, { oldRole, newRole }),
+      data: { ...this.toResponse(updated), previousRole: oldRole },
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 

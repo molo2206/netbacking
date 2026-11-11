@@ -5,7 +5,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { PrismaService } from '../../prisma/prisma.service';
 import { I18nService } from '../../../../libs/common/src/i18n/i18n.service';
-import { normalizePlatform } from '../../../../libs/common/src/utils/platform.util';
+import { normalizePlatform, CHANNEL_LABELS, AppPlatform } from '../../../../libs/common/src/utils/platform.util';
 import { MailService } from 'apps/auth-service/src/email/email.service';
 
 /**
@@ -17,6 +17,7 @@ import { MailService } from 'apps/auth-service/src/email/email.service';
  *     statut, utilisateur, compte, montant min/max, recherche, regroupement)
  *  3. Liste paginée + export CSV des transactions
  *  4. État de l'envoi d'emails + email de test
+ *  5. Rapports séparés MOBILE BANKING / NET BANKING : opérations + comptes créés
  *
  * Source des transactions : opérations faites via l'application et validées
  * par la banque (audit_logs : TRANSFER, DEPOSIT, WITHDRAWAL). Les opérations
@@ -153,14 +154,14 @@ export class AdminStatsService {
       select: { platform: true, status: true, createdAt: true },
     });
 
-    const empty = () => ({ MOBILE: 0, WEB: 0, UNKNOWN: 0, total: 0 });
+    const empty = () => ({ MOBILE: 0, WEB: 0, BACK_OFFICE: 0, UNKNOWN: 0, total: 0 });
     const registered = empty();
     const byStatus: Record<string, ReturnType<typeof empty>> = {};
     const newInPeriod = empty();
     const newByDay: Record<string, ReturnType<typeof empty>> = {};
 
     for (const u of users) {
-      const p = this.platformLabel(u.platform) as 'MOBILE' | 'WEB' | 'UNKNOWN';
+      const p = this.platformLabel(u.platform) as AppPlatform;
       registered[p] += 1;
       registered.total += 1;
       const st = String(u.status || 'UNKNOWN');
@@ -197,7 +198,7 @@ export class AdminStatsService {
       activeInPeriod = empty();
       loginsInPeriod = empty();
       for (const r of active) {
-        const p = this.platformLabel(r.platform) as 'MOBILE' | 'WEB' | 'UNKNOWN';
+        const p = this.platformLabel(r.platform) as AppPlatform;
         activeInPeriod[p] += Number(r.users);
         loginsInPeriod[p] += Number(r.logins);
       }
@@ -208,7 +209,7 @@ export class AdminStatsService {
         lt,
       );
       activeInPeriod.total = Number(distinct?.[0]?.n || 0);
-      loginsInPeriod.total = loginsInPeriod.MOBILE + loginsInPeriod.WEB + loginsInPeriod.UNKNOWN;
+      loginsInPeriod.total = loginsInPeriod.MOBILE + loginsInPeriod.WEB + loginsInPeriod.BACK_OFFICE + loginsInPeriod.UNKNOWN;
 
       const online: any[] = await this.prisma.$queryRawUnsafe<any[]>(
         `SELECT COALESCE(s.platform, 'UNKNOWN') AS platform, COUNT(DISTINCT s.userId) AS users
@@ -218,7 +219,7 @@ export class AdminStatsService {
       );
       onlineNow = empty();
       for (const r of online) {
-        const p = this.platformLabel(r.platform) as 'MOBILE' | 'WEB' | 'UNKNOWN';
+        const p = this.platformLabel(r.platform) as AppPlatform;
         onlineNow[p] += Number(r.users);
         onlineNow.total += Number(r.users);
       }
@@ -287,7 +288,9 @@ export class AdminStatsService {
         day: this.localDay(date),
         type: l.action,
         status: String(m.status || m.bankData?.status || 'SUCCESS').toUpperCase(),
-        platform: this.platformLabel(m.platform, l.user?.platform),
+        // Canal enregistré par l'API Gateway (channel), sinon plateforme bancaire, sinon
+        // plateforme d'inscription du client (opérations antérieures au suivi du canal)
+        platform: this.platformLabel(m.channel, m.platform ?? l.user?.platform),
         userId: l.userId,
         userName: l.user ? `${l.user.firstName || ''} ${l.user.lastName || ''}`.trim() : l.userName,
         clientId: l.user?.clientId ?? null,
@@ -492,6 +495,261 @@ export class AdminStatsService {
       if (v !== undefined && v !== null && v !== '') out[k] = v;
     }
     return out;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 5. RAPPORTS PAR CANAL : MOBILE BANKING / NET BANKING
+  // ═══════════════════════════════════════════════════════════════
+
+  /** « mobile », « mobile-banking », « net », « net-banking », « web »… → MOBILE / WEB. */
+  private parseChannel(raw: any, lang = 'fr'): AppPlatform {
+    const v = String(raw || '').trim().toUpperCase();
+    if (!v) throw this.rpcError(this.channelError(lang), 400);
+    if (/^NET|^WEB|ONLINE|INTERNET/.test(v)) return 'WEB';
+    const p = normalizePlatform(v);
+    if (p === 'UNKNOWN' && v !== 'UNKNOWN') throw this.rpcError(this.channelError(lang), 400);
+    return p;
+  }
+
+  private channelError(lang: string) {
+    return lang === 'en'
+      ? 'Invalid channel. Accepted values: MOBILE (Mobile Banking), WEB (Net Banking), BACK_OFFICE, UNKNOWN.'
+      : 'Canal invalide. Valeurs acceptées : MOBILE (Mobile Banking), WEB (Net Banking), BACK_OFFICE, UNKNOWN.';
+  }
+
+  /** Comptes clients (rôle USER) créés sur la période, avec leur canal d'inscription. */
+  private async loadAccounts(params: { from?: string; to?: string; channel?: string; status?: string; search?: string; lang?: string }) {
+    const lang = params.lang || 'fr';
+    const period = this.resolvePeriod(params.from, params.to, lang);
+    const users = await this.prisma.user.findMany({
+      where: {
+        role: 'USER',
+        deletedAt: null,
+        createdAt: { gte: period.gte, lt: period.lt },
+        ...(params.status ? { status: String(params.status).toUpperCase() as any } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: MAX_ROWS,
+      select: {
+        id: true, clientId: true, firstName: true, lastName: true, phone: true, email: true,
+        status: true, platform: true, createdAt: true, approvedAt: true, lastLoginAt: true,
+      },
+    });
+
+    let rows = users.map((u) => {
+      const channel = this.platformLabel(u.platform) as AppPlatform;
+      return {
+        id: u.id,
+        clientId: u.clientId,
+        name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+        phone: u.phone,
+        email: u.email,
+        status: String(u.status || 'UNKNOWN'),
+        channel,
+        channelLabel: CHANNEL_LABELS[channel],
+        createdAt: u.createdAt,
+        approvedAt: u.approvedAt,
+        lastLoginAt: u.lastLoginAt,
+      };
+    });
+
+    if (params.channel) {
+      const wanted = this.parseChannel(params.channel, lang);
+      rows = rows.filter((r) => r.channel === wanted);
+    }
+    if (params.search) {
+      const q = String(params.search).toLowerCase().trim();
+      rows = rows.filter((r) =>
+        [r.clientId, r.name, r.phone, r.email].some((v) => v && String(v).toLowerCase().includes(q)),
+      );
+    }
+    return { period, rows };
+  }
+
+  private accountsSummary(rows: Array<{ channel: string; status: string; createdAt: Date | null }>) {
+    const byStatus: Record<string, number> = {};
+    const byDay: Record<string, number> = {};
+    for (const r of rows) {
+      byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+      if (r.createdAt) {
+        const d = this.localDay(r.createdAt);
+        byDay[d] = (byDay[d] || 0) + 1;
+      }
+    }
+    return {
+      created: rows.length,
+      approved: byStatus['ACTIVE'] || 0,
+      pending: byStatus['PENDING_VERIFICATION'] || 0,
+      rejected: byStatus['REJECTED'] || 0,
+      byStatus,
+      byDay: Object.keys(byDay).sort().map((day) => ({ day, count: byDay[day] })),
+    };
+  }
+
+  /** Utilisateurs connectés sur la période via ce canal (login_history.platform). */
+  private async activeUsersOnChannel(channel: AppPlatform, gte: Date, lt: Date): Promise<{ users: number; logins: number } | null> {
+    try {
+      const rows: any[] = await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT COUNT(DISTINCT lh.userId) AS users, COUNT(*) AS logins
+           FROM login_history lh JOIN users u ON u.id = lh.userId
+          WHERE lh.success = 1 AND lh.loginAt >= ? AND lh.loginAt < ? AND u.role = 'USER'
+            AND COALESCE(lh.platform, 'UNKNOWN') = ?`,
+        gte, lt, channel,
+      );
+      return { users: Number(rows?.[0]?.users || 0), logins: Number(rows?.[0]?.logins || 0) };
+    } catch {
+      return null; // migration 20261104 non appliquée
+    }
+  }
+
+  /**
+   * Rapport d'UN canal : MOBILE = Mobile Banking, WEB = Net Banking.
+   * Opérations (résumé + liste paginée) + comptes créés + utilisateurs actifs.
+   */
+  async channelReport(f: TransactionFilters & { channel: string }) {
+    const lang = f.lang || 'fr';
+    const channel = this.parseChannel(f.channel, lang);
+    const page = Math.max(1, Number(f.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(f.limit) || 20));
+
+    const { period, rows, truncated } = await this.loadOperations({ ...f, platform: channel });
+    const summary = this.summarize(rows, f.groupBy);
+    const accounts = await this.loadAccounts({ from: period.start, to: period.end, channel, lang });
+
+    return {
+      message: this.i18nService.translate('admin_report_retrieved', lang),
+      data: {
+        channel,
+        label: CHANNEL_LABELS[channel],
+        period: { from: period.start, to: period.end },
+        filters: this.cleanFilters(f),
+        activeUsers: await this.activeUsersOnChannel(channel, period.gte, period.lt),
+        accounts: this.accountsSummary(accounts.rows),
+        operations: {
+          totalOperations: summary.totalOperations,
+          byCurrency: summary.byCurrency,
+          byType: summary.byType,
+          timeline: summary.timeline,
+          topUsers: summary.topUsers,
+          data: rows.slice((page - 1) * limit, page * limit).map((r) => this.publicRow(r)),
+          total: rows.length,
+          page,
+          limit,
+          totalPages: Math.ceil(rows.length / limit),
+          hasNextPage: page * limit < rows.length,
+          hasPreviousPage: page > 1,
+          truncated,
+        },
+      },
+    };
+  }
+
+  /** Mobile Banking et Net Banking côte à côte (même période, mêmes filtres). */
+  async channelsComparison(f: TransactionFilters) {
+    const lang = f.lang || 'fr';
+    const { period, rows, truncated } = await this.loadOperations({ ...f, platform: undefined });
+    const accounts = await this.loadAccounts({ from: period.start, to: period.end, lang });
+
+    const channels: AppPlatform[] = ['MOBILE', 'WEB', 'BACK_OFFICE', 'UNKNOWN'];
+    const result: Record<string, any> = {};
+    for (const ch of channels) {
+      const ops = rows.filter((r) => r.platform === ch);
+      const acc = accounts.rows.filter((r) => r.channel === ch);
+      if ((ch === 'BACK_OFFICE' || ch === 'UNKNOWN') && !ops.length && !acc.length) continue;
+      const sum = this.summarize(ops, f.groupBy);
+      result[ch] = {
+        label: CHANNEL_LABELS[ch],
+        activeUsers: ch === 'MOBILE' || ch === 'WEB' ? await this.activeUsersOnChannel(ch, period.gte, period.lt) : null,
+        accounts: this.accountsSummary(acc),
+        operations: {
+          totalOperations: sum.totalOperations,
+          byCurrency: sum.byCurrency,
+          byType: sum.byType,
+        },
+      };
+    }
+
+    return {
+      message: this.i18nService.translate('admin_report_retrieved', lang),
+      data: {
+        period: { from: period.start, to: period.end },
+        filters: this.cleanFilters(f),
+        truncated,
+        totals: {
+          operations: rows.length,
+          accountsCreated: accounts.rows.length,
+        },
+        channels: result,
+      },
+    };
+  }
+
+  /** Export CSV des opérations d'un canal. */
+  async channelCsv(f: TransactionFilters & { channel: string }) {
+    const lang = f.lang || 'fr';
+    const channel = this.parseChannel(f.channel, lang);
+    const csv = await this.transactionsCsv({ ...f, platform: channel });
+    const slug = channel === 'WEB' ? 'net-banking' : channel === 'MOBILE' ? 'mobile-banking' : channel.toLowerCase();
+    csv.data.filename = csv.data.filename.replace(/^transactions_/, `operations_${slug}_`);
+    return csv;
+  }
+
+  /** Comptes créés : liste paginée filtrable par canal (Mobile / Net Banking). */
+  async accountsByChannel(params: {
+    from?: string; to?: string; channel?: string; status?: string; search?: string;
+    page?: number; limit?: number; lang?: string;
+  }) {
+    const lang = params.lang || 'fr';
+    const page = Math.max(1, Number(params.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(params.limit) || 20));
+    const { period, rows } = await this.loadAccounts(params);
+
+    const byChannel: Record<string, { label: string; count: number }> = {};
+    for (const r of rows) {
+      byChannel[r.channel] ??= { label: r.channelLabel, count: 0 };
+      byChannel[r.channel].count += 1;
+    }
+
+    return {
+      message: this.i18nService.translate('admin_report_retrieved', lang),
+      data: {
+        period: { from: period.start, to: period.end },
+        channel: params.channel ? this.parseChannel(params.channel, lang) : null,
+        summary: { total: rows.length, byChannel, ...this.accountsSummary(rows) },
+        data: rows.slice((page - 1) * limit, page * limit),
+        total: rows.length,
+        page,
+        limit,
+        totalPages: Math.ceil(rows.length / limit),
+        hasNextPage: page * limit < rows.length,
+        hasPreviousPage: page > 1,
+      },
+    };
+  }
+
+  async accountsCsv(params: { from?: string; to?: string; channel?: string; status?: string; search?: string; lang?: string }) {
+    const lang = params.lang || 'fr';
+    const { period, rows } = await this.loadAccounts(params);
+    const esc = (v: any) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const iso = (d: Date | null) => (d ? d.toISOString() : '');
+    const header = ['Date de création', 'Canal', 'Code client', 'Nom', 'Téléphone', 'Email', 'Statut', 'Approuvé le', 'Dernière connexion'];
+    const lines = rows.map((r) => [
+      iso(r.createdAt), r.channelLabel, r.clientId, r.name, r.phone, r.email, r.status, iso(r.approvedAt), iso(r.lastLoginAt),
+    ].map(esc).join(';'));
+    const ch = params.channel ? this.parseChannel(params.channel, lang) : null;
+    const slug = ch === 'WEB' ? 'net-banking' : ch === 'MOBILE' ? 'mobile-banking' : ch ? ch.toLowerCase() : 'tous-canaux';
+    return {
+      message: this.i18nService.translate('admin_report_retrieved', lang),
+      data: {
+        filename: `comptes_${slug}_${period.start}_${period.end}.csv`,
+        contentType: 'text/csv; charset=utf-8',
+        rows: rows.length,
+        content: '﻿' + [header.join(';'), ...lines].join('\r\n'),
+      },
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════

@@ -33,6 +33,8 @@ import {
   phoneVariants,
   validateNewPassword,
 } from '@app/common';
+import { writeAudit } from '../../../libs/common/src/audit/write-audit';
+import { clientFromOrigin, getRequestContext, parseDevice } from '../../../libs/common/src/context/request-context';
 
 const registerLocks: Map<string, boolean> = new Map();
 
@@ -104,7 +106,7 @@ export class AuthServiceService {
     ipAddress: string | null,
   ) {
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: userId || undefined,
           action,
@@ -142,22 +144,70 @@ export class AuthServiceService {
     await this.logAudit(userId, action, details, ipAddress);
   }
 
+  /**
+   * Appareil utilisé pour la requête en cours : nom / type d'appareil, OS, navigateur,
+   * version de l'app, à partir du contexte transmis par l'API Gateway (user-agent,
+   * headers x-device-*) et de deviceInfo envoyé par l'app à la connexion.
+   */
+  private currentDevice(dto: { userAgent?: string | null; deviceInfo?: string | null; deviceId?: string | null } = {}) {
+    const ctx = getRequestContext();
+    const info = String(dto.deviceInfo || '').trim();
+    const infoIsUserAgent = /mozilla|okhttp|cfnetwork|dart\/|darwin|^[\w.-]+\/[\d.]+/i.test(info);
+    const userAgent = ctx.userAgent || dto.userAgent || (infoIsUserAgent ? info : null) || null;
+
+    const device = ctx.userAgent
+      ? {
+          deviceType: ctx.deviceType || null,
+          deviceName: ctx.deviceName || null,
+          os: ctx.os || null,
+          browser: ctx.browser || null,
+          deviceId: ctx.deviceId || null,
+          appVersion: ctx.appVersion || null,
+        }
+      : parseDevice(userAgent);
+
+    // Nom envoyé par l'app (« Samsung Galaxy A51 ») plus précis qu'un nom générique déduit
+    const generic = /^(Téléphone|Tablette|Ordinateur|Application|iPhone \/ iPad|Client API|Mac$)/i;
+    if (info && !infoIsUserAgent && (!device.deviceName || generic.test(device.deviceName))) {
+      device.deviceName = info.slice(0, 100);
+    }
+    return {
+      ...device,
+      deviceId: dto.deviceId || device.deviceId || null,
+      userAgent,
+      ipAddress: ctx.ipAddress || null,
+    };
+  }
+
   private async logFailedLoginAttempt(
     userId: string | null,
     identifier: string,
     ipAddress: string | null,
     userAgent: string | null,
+    reason: string = 'Invalid credentials',
   ) {
     try {
-      await this.prisma.loginHistory.create({
+      const device = this.currentDevice({ userAgent });
+      const entry = await this.prisma.loginHistory.create({
         data: {
           userId: userId || '',
-          ipAddress: ipAddress || 'unknown',
-          userAgent: userAgent || 'unknown',
+          ipAddress: ipAddress || device.ipAddress || 'unknown',
+          userAgent: device.userAgent || userAgent || 'unknown',
+          deviceId: device.deviceId || undefined,
+          deviceType: device.deviceType || undefined,
+          deviceName: device.deviceName || undefined,
+          os: device.os || undefined,
+          browser: device.browser || undefined,
           success: false,
-          failureReason: 'Invalid credentials',
+          failureReason: reason,
         },
       });
+      const ctx = getRequestContext();
+      await this.recordPlatform(
+        'login_history',
+        entry.id,
+        normalizePlatform(ctx.client || ctx.declaredPlatform, device.userAgent),
+      );
     } catch (err) {
       console.error('Failed login attempt log failed:', err);
     }
@@ -426,9 +476,10 @@ export class AuthServiceService {
         status: users_status.PENDING_VERIFICATION,
         clientId,
         // ✅ Plateforme d'inscription harmonisée : MOBILE ou WEB
+        //    (x-client / platform → user-agent → deviceInfo ; UNKNOWN si rien ne permet de trancher)
         platform: (() => {
-          const p = normalizePlatform(data.platform, data.deviceInfo);
-          return p === 'UNKNOWN' ? 'WEB' : p;
+          const p = normalizePlatform(data.platform, data.userAgent || data.deviceInfo);
+          return p !== 'UNKNOWN' ? p : normalizePlatform(undefined, data.deviceInfo);
         })(),
         isPhoneVerified: true,
         mustChangePassword: false,
@@ -601,7 +652,14 @@ export class AuthServiceService {
     const lang = dto.lang || 'fr';
     const identifier = dto.identifier;
     // ✅ Plateforme de connexion (MOBILE / WEB) — statistiques admin
-    const loginPlatform = normalizePlatform(dto.platform, dto.userAgent || dto.deviceInfo);
+    //    x-client / platform du body, sinon origine (net-admin → BACK_OFFICE, net-banking → WEB),
+    //    sinon user-agent (application mobile / navigateur)
+    const loginContext = getRequestContext();
+    const loginPlatform = normalizePlatform(
+      dto.platform || loginContext.client || loginContext.declaredPlatform,
+      dto.userAgent || loginContext.userAgent || dto.deviceInfo,
+    );
+    const loginDevice = this.currentDevice({ userAgent: dto.userAgent, deviceInfo: dto.deviceInfo, deviceId: dto.deviceId });
 
     try {
       const user = await this.prisma.user.findFirst({
@@ -662,23 +720,43 @@ export class AuthServiceService {
         });
       }
 
-      // ✅ Administrateurs : connexion UNIQUEMENT avec l'adresse email
-      //    (pas de code client ni de téléphone pour ADMIN / SUPER_ADMIN)
+      // ✅ Administrateurs : l'identifiant dépend de l'interface utilisée
+      //    - Administration (back-office)          → adresse e-mail uniquement
+      //    - Application mobile / Net Banking (client) → code client (clientId) uniquement
+      //    - Interface non déterminée (Postman, outil…) → e-mail ou code client
+      //    Les clients (rôle USER…) ne sont pas concernés : leur connexion est inchangée.
       if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
         const typed = String(identifier || '').trim().toLowerCase();
         const adminEmail = String(user.email || '').trim().toLowerCase();
-        if (!adminEmail || typed !== adminEmail) {
+        const adminClientId = String(user.clientId || '').trim().toLowerCase();
+        const usedEmail = !!adminEmail && typed === adminEmail;
+        const usedClientId = !!adminClientId && typed === adminClientId;
+        const loginInterface = this.loginInterface(dto);
+
+        let refusal: { key: string; code: string } | null = null;
+        if (loginInterface === 'ADMIN') {
+          if (!adminEmail) refusal = { key: 'admin_login_no_email', code: 'ADMIN_LOGIN_NO_EMAIL' };
+          else if (!usedEmail) refusal = { key: 'admin_login_email_only', code: 'ADMIN_LOGIN_EMAIL_ONLY' };
+        } else if (loginInterface === 'CLIENT_APP') {
+          if (!adminClientId) refusal = { key: 'admin_login_no_client_id', code: 'ADMIN_LOGIN_NO_CLIENT_ID' };
+          else if (!usedClientId) refusal = { key: 'admin_login_client_id_only', code: 'ADMIN_LOGIN_CLIENT_ID_ONLY' };
+        } else if (!usedEmail && !usedClientId) {
+          refusal = { key: 'admin_login_email_only', code: 'ADMIN_LOGIN_EMAIL_ONLY' };
+        }
+
+        if (refusal) {
           await this.logFailedLoginAttempt(
             user.id,
             identifier,
             ipAddress || null,
             dto.userAgent || null,
+            `${refusal.code} (interface : ${loginInterface})`,
           );
           throw new BadRequestException({
             status: 'error',
-            message: this.i18nService.translate('admin_login_email_only', lang),
+            message: this.i18nService.translate(refusal.key, lang),
             statusCode: 400,
-            code: 'ADMIN_LOGIN_EMAIL_ONLY',
+            code: refusal.code,
           });
         }
       }
@@ -824,10 +902,14 @@ export class AuthServiceService {
       const loginEntry = await this.prisma.loginHistory.create({
         data: {
           userId: user.id,
-          ipAddress: ipAddress || 'unknown',
-          userAgent: dto.userAgent || dto.deviceInfo || 'unknown',
+          ipAddress: ipAddress || loginDevice.ipAddress || 'unknown',
+          userAgent: loginDevice.userAgent || dto.deviceInfo || 'unknown',
           success: true,
-          deviceId: dto.fcmToken || undefined,
+          deviceId: loginDevice.deviceId || dto.fcmToken || undefined,
+          deviceType: loginDevice.deviceType || undefined,
+          deviceName: loginDevice.deviceName || undefined,
+          os: loginDevice.os || undefined,
+          browser: loginDevice.browser || undefined,
         },
       });
       await this.recordPlatform('login_history', loginEntry.id, loginPlatform);
@@ -841,23 +923,35 @@ export class AuthServiceService {
         { mustChangePassword },
       );
 
-      let deviceId = dto.fcmToken;
-      if (!deviceId) {
-        const fingerprint = `${dto.deviceInfo || ''}|${dto.platform || ''}|${ipAddress || ''}`;
-        deviceId = crypto
-          .createHash('sha256')
-          .update(fingerprint)
-          .digest('hex');
+      // ✅ Plusieurs appareils :
+      //   - ADMIN / SUPER_ADMIN : chaque connexion ouvre une NOUVELLE session, les autres
+      //     restent actives (téléphone, ordinateur du bureau, portable…).
+      //   - Client : une session par appareil ; se reconnecter sur le MÊME appareil
+      //     remplace l'ancienne session de cet appareil uniquement.
+      const isAdminLogin = userRole === UserRole.ADMIN || userRole === UserRole.SUPER_ADMIN;
+      const declaredDevice = loginDevice.deviceId || dto.fcmToken;
+      let deviceId: string;
+      if (declaredDevice) {
+        deviceId = String(declaredDevice);
+      } else if (isAdminLogin) {
+        deviceId = `admin-${crypto.randomUUID()}`;
+      } else {
+        // Empreinte de l'appareil : inclut le user-agent pour ne pas confondre deux
+        // navigateurs / téléphones derrière la même adresse IP
+        const fingerprint = `${dto.deviceInfo || ''}|${dto.userAgent || ''}|${loginPlatform}|${ipAddress || ''}`;
+        deviceId = crypto.createHash('sha256').update(fingerprint).digest('hex');
       }
 
-      await this.prisma.session.updateMany({
-        where: {
-          userId: user.id,
-          isActive: true,
-          deviceId: deviceId,
-        },
-        data: { isActive: false },
-      });
+      if (!isAdminLogin) {
+        await this.prisma.session.updateMany({
+          where: {
+            userId: user.id,
+            isActive: true,
+            deviceId: deviceId,
+          },
+          data: { isActive: false, logoutAt: new Date() },
+        });
+      }
 
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 30);
@@ -869,8 +963,13 @@ export class AuthServiceService {
           token: tokens.accessToken,
           refreshToken: tokens.refreshToken,
           deviceId: deviceId,
-          userAgent: dto.deviceInfo || null,
-          ipAddress: ipAddress || null,
+          deviceName: loginDevice.deviceName || null,
+          deviceType: loginDevice.deviceType || null,
+          os: loginDevice.os || null,
+          browser: loginDevice.browser || null,
+          appVersion: loginDevice.appVersion || null,
+          userAgent: loginDevice.userAgent || dto.deviceInfo || null,
+          ipAddress: ipAddress || loginDevice.ipAddress || null,
           expiresAt: expiresAt,
           isActive: true,
           createdAt: new Date(),
@@ -885,7 +984,7 @@ export class AuthServiceService {
             where: { deviceId: dto.fcmToken },
             update: {
               userId: user.id,
-              deviceName: dto.deviceInfo || 'unknown',
+              deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
               deviceType: loginPlatform,
               pushToken: dto.fcmToken,
               isActive: true,
@@ -896,7 +995,7 @@ export class AuthServiceService {
               id: crypto.randomUUID(),
               userId: user.id,
               deviceId: dto.fcmToken,
-              deviceName: dto.deviceInfo || 'unknown',
+              deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
               deviceType: loginPlatform,
               pushToken: dto.fcmToken,
               isActive: true,
@@ -940,14 +1039,8 @@ export class AuthServiceService {
         orderBy: { createdAt: 'desc' },
       });
 
-      const formattedSessions = sessions.map(session => ({
-        id: session.id,
-        device_info: session.userAgent,
-        ip_address: session.ipAddress,
-        last_activity: session.createdAt,
-        created_at: session.createdAt,
-        expires_at: session.expiresAt,
-      }));
+      const platformsById = await this.sessionPlatforms(sessions.map((x) => x.id));
+      const formattedSessions = sessions.map((session) => this.formatSession(session, platformsById));
 
       return {
         accessToken: tokens.accessToken,
@@ -1070,12 +1163,19 @@ export class AuthServiceService {
           refreshToken: tokens.refreshToken,
           expiresAt: expiresAt,
           isActive: true,
-          ipAddress: session.ipAddress,
+          ipAddress: getRequestContext().ipAddress || session.ipAddress,
           userAgent: session.userAgent,
           deviceName: session.deviceName,
+          // ✅ Le renouvellement conserve l'appareil et la plateforme de la session
+          deviceId: session.deviceId,
+          os: session.os,
+          browser: session.browser,
+          deviceType: session.deviceType,
+          appVersion: getRequestContext().appVersion || session.appVersion,
           createdAt: new Date(),
         },
       });
+      await this.copySessionPlatform(session.id, newSession.id);
 
       console.log(`Token refreshed for user ${session.user.email}`);
 
@@ -1549,6 +1649,7 @@ export class AuthServiceService {
 
       const userRole = updatedUser.role || UserRole.USER;
       const sessionId = crypto.randomUUID();
+      const cpDevice = this.currentDevice({ deviceInfo: changePasswordDto.deviceInfo });
       const tokens = this.generateJwtTokens(
         updatedUser.id,
         updatedUser.email || null,
@@ -1565,13 +1666,27 @@ export class AuthServiceService {
           userId: updatedUser.id,
           token: tokens.accessToken,
           refreshToken: tokens.refreshToken,
-          userAgent: changePasswordDto.deviceInfo || null,
-          ipAddress: ipAddress || null,
+          userAgent: cpDevice.userAgent || changePasswordDto.deviceInfo || null,
+          deviceId: cpDevice.deviceId || null,
+          deviceName: cpDevice.deviceName || null,
+          deviceType: cpDevice.deviceType || null,
+          os: cpDevice.os || null,
+          browser: cpDevice.browser || null,
+          appVersion: cpDevice.appVersion || null,
+          ipAddress: ipAddress || cpDevice.ipAddress || null,
           expiresAt,
           isActive: true,
           createdAt: new Date(),
         },
       });
+      {
+        const cpCtx = getRequestContext();
+        await this.recordPlatform(
+          'sessions',
+          sessionId,
+          normalizePlatform(cpCtx.client || cpCtx.declaredPlatform, cpDevice.userAgent),
+        );
+      }
 
       const accounts = await this.fetchClientAccounts(updatedUser.clientId, lang, 'ChangePassword');
 
@@ -1628,9 +1743,15 @@ export class AuthServiceService {
         where: { isActive: true, expiresAt: { gt: new Date() } },
       }),
     ]);
+    // ✅ Jetons jamais renvoyés ; appareil + plateforme ajoutés
+    const platformsById = await this.sessionPlatforms(sessions.map((x: any) => x.id));
     return {
       message: this.i18nService.translate('sessions_retrieved', lang),
-      data: sessions,
+      data: sessions.map(({ token, refreshToken, ...x }: any) => ({
+        ...x,
+        platform: platformsById[x.id] ?? null,
+        deviceLabel: [x.deviceName, x.os, x.browser].filter(Boolean).join(' · ') || x.userAgent,
+      })),
       total,
       page,
       limit,
@@ -1661,6 +1782,10 @@ export class AuthServiceService {
           ipAddress: true,
           userAgent: true,
           deviceName: true,
+          deviceType: true,
+          os: true,
+          browser: true,
+          appVersion: true,
           createdAt: true,
           expiresAt: true,
         },
@@ -1673,9 +1798,15 @@ export class AuthServiceService {
         },
       }),
     ]);
+    // ✅ Jetons jamais renvoyés ; appareil + plateforme ajoutés
+    const platformsById = await this.sessionPlatforms(sessions.map((x: any) => x.id));
     return {
       message: this.i18nService.translate('sessions_retrieved', lang),
-      data: sessions,
+      data: sessions.map(({ token, refreshToken, ...x }: any) => ({
+        ...x,
+        platform: platformsById[x.id] ?? null,
+        deviceLabel: [x.deviceName, x.os, x.browser].filter(Boolean).join(' · ') || x.userAgent,
+      })),
       total,
       page,
       limit,
@@ -1708,9 +1839,16 @@ export class AuthServiceService {
         statusCode: 404,
       });
     }
+    // ✅ Jetons jamais renvoyés ; appareil + plateforme ajoutés
+    const { token, refreshToken, ...safe } = session as any;
+    const platformsById = await this.sessionPlatforms([session.id]);
     return {
       message: this.i18nService.translate('session_retrieved', lang),
-      data: session,
+      data: {
+        ...safe,
+        platform: platformsById[session.id] ?? null,
+        deviceLabel: [safe.deviceName, safe.os, safe.browser].filter(Boolean).join(' · ') || safe.userAgent,
+      },
     };
   }
 
@@ -1765,6 +1903,73 @@ export class AuthServiceService {
       this.logger.warn(
         `[recordPlatform] ${table}.platform indisponible (migration 20261104 non appliquée ?) : ${err?.message || err}`,
       );
+    }
+  }
+
+  /**
+   * Interface utilisée pour se connecter :
+   *   ADMIN      : administration (x-client back_office/admin, ou origine de l'admin)
+   *   CLIENT_APP : application mobile ou Net Banking (x-client mobile/web, origine du
+   *                Net Banking, ou user-agent d'application mobile)
+   *   UNKNOWN    : rien ne permet de trancher (Postman, curl…)
+   */
+  private loginInterface(dto: { platform?: string; userAgent?: string }): 'ADMIN' | 'CLIENT_APP' | 'UNKNOWN' {
+    const ctx = getRequestContext();
+    if (clientFromOrigin(ctx.origin) === 'BACK_OFFICE') return 'ADMIN';
+    const declared = normalizePlatform(dto.platform || ctx.client || ctx.declaredPlatform);
+    if (declared === 'BACK_OFFICE') return 'ADMIN';
+    if (declared === 'MOBILE' || declared === 'WEB') return 'CLIENT_APP';
+    if (ctx.deviceType === 'MOBILE_APP') return 'CLIENT_APP';
+    const ua = String(dto.userAgent || ctx.userAgent || '');
+    if (/okhttp|cfnetwork|dart\/|react-native|expo|dalvik/i.test(ua) && !/mozilla/i.test(ua)) return 'CLIENT_APP';
+    return 'UNKNOWN';
+  }
+
+  /** Plateformes des sessions (colonne sessions.platform, lue en SQL brut). */
+  private async sessionPlatforms(ids: string[]): Promise<Record<string, string | null>> {
+    if (!ids.length) return {};
+    try {
+      const rows: any[] = await this.prisma.$queryRawUnsafe(
+        `SELECT id, platform FROM sessions WHERE id IN (${ids.map(() => '?').join(',')})`,
+        ...ids,
+      );
+      return Object.fromEntries(rows.map((r) => [r.id, r.platform ?? null]));
+    } catch {
+      return {};
+    }
+  }
+
+  /** Session présentée au client : appareil, navigateur, OS, plateforme — jamais les jetons. */
+  private formatSession(session: any, platforms: Record<string, string | null>) {
+    const device = [session.deviceName, session.os, session.browser].filter(Boolean).join(' · ');
+    return {
+      id: session.id,
+      device_info: device || session.userAgent,
+      device_name: session.deviceName ?? null,
+      device_type: session.deviceType ?? null,
+      device_id: session.deviceId ?? null,
+      os: session.os ?? null,
+      browser: session.browser ?? null,
+      platform: platforms[session.id] ?? null,
+      app_version: session.appVersion ?? null,
+      user_agent: session.userAgent ?? null,
+      ip_address: session.ipAddress,
+      last_activity: session.createdAt,
+      created_at: session.createdAt,
+      expires_at: session.expiresAt,
+    };
+  }
+
+  /** Plateforme (MOBILE / WEB…) reprise d'une session à l'autre lors du renouvellement du jeton. */
+  private async copySessionPlatform(fromId: string, toId: string) {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        'UPDATE `sessions` s JOIN `sessions` o ON o.id = ? SET s.platform = o.platform WHERE s.id = ?',
+        fromId,
+        toId,
+      );
+    } catch (err) {
+      this.logger.warn(`[copySessionPlatform] ${err?.message || err}`);
     }
   }
 
@@ -1999,6 +2204,11 @@ export class AuthServiceService {
       select: {
         id: true,
         deviceId: true,
+        deviceName: true,
+        deviceType: true,
+        os: true,
+        browser: true,
+        appVersion: true,
         userAgent: true,
         ipAddress: true,
         createdAt: true,
@@ -2007,14 +2217,8 @@ export class AuthServiceService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const formattedSessions = sessions.map(session => ({
-      id: session.id,
-      device_info: session.userAgent,
-      ip_address: session.ipAddress,
-      last_activity: session.createdAt,
-      created_at: session.createdAt,
-      expires_at: session.expiresAt,
-    }));
+    const platformsById = await this.sessionPlatforms(sessions.map((x) => x.id));
+    const formattedSessions = sessions.map((session) => this.formatSession(session, platformsById));
 
     return {
       accessToken: null,
@@ -2113,7 +2317,13 @@ export class AuthServiceService {
       },
     });
 
-    return sessions;
+    // ✅ Les jetons (token / refreshToken) ne sont plus renvoyés au client
+    const platformsById = await this.sessionPlatforms(sessions.map((x) => x.id));
+    return sessions.map(({ token, refreshToken, ...session }) => ({
+      ...session,
+      platform: platformsById[session.id] ?? null,
+      deviceLabel: [session.deviceName, session.os, session.browser].filter(Boolean).join(' · ') || session.userAgent,
+    }));
   }
 
   // ==================== REVOKE SESSION ====================
@@ -2204,6 +2414,9 @@ export class AuthServiceService {
       sub: userId,
       email: email || '',
       role,
+      // ✅ Identifiant unique : deux connexions dans la même seconde (2 appareils)
+      //    ne produisent plus le même jeton (colonne sessions.token unique)
+      jti: crypto.randomUUID(),
       ...(sessionId && { sessionId }),
       // ✅ Lu par JwtAuthGuard : bloque l'API tant que le mot de passe temporaire n'est pas changé
       ...(extraClaims.mustChangePassword ? { mustChangePassword: true } : {}),

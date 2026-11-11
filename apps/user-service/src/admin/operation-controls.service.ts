@@ -18,6 +18,7 @@ import {
   userLimitsKey,
   validateOperationControls,
 } from '../../../../libs/common/src/settings/operation-controls';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
 
 /**
  * Lecture / modification des contrôles d'opérations (table `settings`).
@@ -113,7 +114,7 @@ export class OperationControlsService {
     invalidateOperationControlsCache();
 
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: admin.id,
           userName: `${admin.firstName || ''} ${admin.lastName || ''}`.trim() || null,
@@ -207,7 +208,7 @@ export class OperationControlsService {
     });
 
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: admin.id,
           userName: `${admin.firstName || ''} ${admin.lastName || ''}`.trim() || null,
@@ -233,7 +234,7 @@ export class OperationControlsService {
     const admin = await this.loadAdmin(params.adminId, lang);
     await this.prisma.settings.deleteMany({ where: { key: userLimitsKey(params.userId) } });
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: admin.id,
           action: 'ADMIN_RESET_USER_LIMITS',

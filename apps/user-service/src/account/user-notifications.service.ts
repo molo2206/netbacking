@@ -8,6 +8,8 @@ import { users_status } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { I18nService } from '../../../../libs/common/src/i18n/i18n.service';
 import { NotificationService } from 'apps/notification-service/src/notification.service';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
+import { getRequestContext } from '../../../../libs/common/src/context/request-context';
 
 /**
  * ═══════════════════════════════════════════════════════════════════
@@ -95,6 +97,9 @@ export class UserNotificationsService {
     }
 
     let sent = 0;
+    let pushed = 0;       // push Firebase réellement envoyé
+    let pushFailed = 0;   // Firebase a refusé (token invalide, configuration…)
+    let noDevice = 0;     // aucun appareil enregistré (ou Firebase désactivé)
     const batchSize = 20;
     for (let i = 0; i < userIds.length; i += batchSize) {
       const batch = userIds.slice(i, i + batchSize);
@@ -107,10 +112,17 @@ export class UserNotificationsService {
         ),
       );
       sent += results.filter((r) => r.status === 'fulfilled').length;
+      for (const r of results) {
+        if (r.status !== 'fulfilled') continue;
+        const st = (r.value as any)?.status;
+        if (st === 'SENT') pushed += 1;
+        else if (st === 'FAILED') pushFailed += 1;
+        else noDevice += 1;
+      }
     }
 
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: params.adminId,
           action: 'ADMIN_SEND_NOTIFICATION',
@@ -125,7 +137,75 @@ export class UserNotificationsService {
 
     return {
       message: this.i18nService.translate('admin_notification_sent', lang, { count: sent }),
-      data: { audience, recipients: userIds.length, sent },
+      data: {
+        audience,
+        recipients: userIds.length,
+        sent,            // enregistrées dans l'historique des notifications
+        pushed,          // reçues en push sur le téléphone
+        pushFailed,
+        withoutPush: noDevice,
+        push: this.notificationService.pushStatus(),
+      },
+    };
+  }
+
+  /**
+   * Diagnostic des notifications push : état de Firebase, appareils enregistrés,
+   * dernières notifications. Avec userId : appareils et notifications de cet utilisateur.
+   */
+  async pushDiagnostic(params: { userId?: string; lang?: string }) {
+    const where: any = params.userId ? { userId: params.userId } : {};
+    const [devicesWithToken, activeDevicesWithToken, usersWithToken, lastNotifications, byStatus] = await Promise.all([
+      this.prisma.device.count({ where: { ...where, pushToken: { not: null } } }),
+      this.prisma.device.count({
+        where: { ...where, pushToken: { not: null }, OR: [{ isActive: true }, { isActive: null }] },
+      }),
+      this.prisma.device
+        .groupBy({ by: ['userId'], where: { ...where, pushToken: { not: null } } })
+        .then((r) => r.length)
+        .catch(() => null),
+      this.prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { id: true, userId: true, title: true, status: true, sentAt: true, createdAt: true },
+      }),
+      this.prisma.notification
+        .groupBy({ by: ['status'], where, _count: { _all: true } })
+        .catch(() => [] as any[]),
+    ]);
+    const devices = params.userId
+      ? await this.prisma.device.findMany({
+          where: { userId: params.userId },
+          orderBy: [{ updatedAt: 'desc' }],
+          take: 10,
+          select: { id: true, deviceName: true, deviceType: true, isActive: true, lastUsedAt: true, updatedAt: true, pushToken: true },
+        })
+      : [];
+
+    return {
+      message: 'Diagnostic des notifications push',
+      data: {
+        firebase: this.notificationService.pushStatus(),
+        devices: {
+          withToken: devicesWithToken,
+          activeWithToken: activeDevicesWithToken,
+          usersWithToken,
+          list: devices.map((d) => ({
+            ...d,
+            pushToken: d.pushToken ? `${d.pushToken.slice(0, 12)}…${d.pushToken.slice(-6)}` : null,
+          })),
+        },
+        notifications: {
+          byStatus: (byStatus as any[]).map((b) => ({ status: b.status, count: b._count._all })),
+          last: lastNotifications,
+        },
+        hints: [
+          'firebase = disabled : ajouter FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL et FIREBASE_PRIVATE_KEY (mêmes valeurs qu\'AccesPay) dans le .env puis redémarrer.',
+          'withToken = 0 : l\'application mobile n\'a envoyé aucun token FCM (champ fcmToken à la connexion ou POST /users/me/device-token).',
+          'Notifications FAILED : voir firebase.lastPushError (token invalide, projet Firebase différent de celui de l\'application…).',
+        ],
+      },
     };
   }
 
@@ -182,7 +262,8 @@ export class UserNotificationsService {
           entity: 'USER',
           entityId: user.id,
           message: JSON.stringify({ clientId: user.clientId }),
-          ipAddress: params.ipAddress || undefined,
+          ipAddress: params.ipAddress || getRequestContext().ipAddress || undefined,
+          userAgent: getRequestContext().userAgent || undefined,
           level: 'WARN',
         },
       }),

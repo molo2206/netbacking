@@ -11,6 +11,7 @@ import { normalizePhoneToInternational } from '../../../../libs/common/src/utils
 import { UserApprovalService } from '../approval/user-approval.service';
 import { NotificationHelper } from 'apps/notification-service/src/helpers/NotificationHelper';
 import { NotificationType } from 'apps/notification-service/src/type/notification-type';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
 
 /**
  * ═══════════════════════════════════════════════════════════════════
@@ -116,7 +117,7 @@ export class AdminSecurityService {
     newValue?: any,
   ) {
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: admin.id,
           userName: `${admin.firstName || ''} ${admin.lastName || ''}`.trim() || null,
@@ -182,6 +183,7 @@ export class AdminSecurityService {
         select: {
           id: true, deviceName: true, userAgent: true, ipAddress: true,
           os: true, browser: true, createdAt: true, expiresAt: true,
+          deviceId: true, deviceType: true, appVersion: true,
         },
       }),
       this.prisma.loginHistory
@@ -193,6 +195,32 @@ export class AdminSecurityService {
         take: 20,
       }),
     ]);
+
+    // Plateforme (MOBILE / WEB / BACK_OFFICE) des sessions et connexions — colonne lue en SQL brut
+    const platformOf = async (table: 'sessions' | 'login_history', ids: string[]) => {
+      if (!ids.length) return {} as Record<string, string | null>;
+      try {
+        const rows: any[] = await this.prisma.$queryRawUnsafe(
+          `SELECT id, platform FROM ${table} WHERE id IN (${ids.map(() => '?').join(',')})`,
+          ...ids,
+        );
+        return Object.fromEntries(rows.map((r) => [r.id, r.platform ?? null])) as Record<string, string | null>;
+      } catch {
+        return {} as Record<string, string | null>;
+      }
+    };
+    const sessionPlatforms = await platformOf('sessions', activeSessions.map((x: any) => x.id));
+    const loginPlatforms = await platformOf('login_history', (lastLogins as any[]).map((x: any) => x.id));
+    const sessionsWithPlatform = activeSessions.map((x: any) => ({
+      ...x,
+      platform: sessionPlatforms[x.id] ?? null,
+      deviceLabel: [x.deviceName, x.os, x.browser].filter(Boolean).join(' · ') || x.userAgent,
+    }));
+    const loginsWithPlatform = (lastLogins as any[]).map((x: any) => ({
+      ...x,
+      platform: loginPlatforms[x.id] ?? null,
+      deviceLabel: [x.deviceName, x.os, x.browser].filter(Boolean).join(' · ') || x.userAgent,
+    }));
 
     const pinLocked = !!(user.pinLockedUntil && user.pinLockedUntil > now);
     const loginLocked = !!(user.lockedUntil && user.lockedUntil > now);
@@ -227,8 +255,8 @@ export class AdminSecurityService {
           tempPasswordExpiresAt: user.tempPasswordExpiresAt,
           isTwoFactorEnabled: user.isTwoFactorEnabled === true,
         },
-        sessions: { activeCount: activeSessions.length, active: activeSessions },
-        lastLogins,
+        sessions: { activeCount: activeSessions.length, active: sessionsWithPlatform },
+        lastLogins: loginsWithPlatform,
         adminActions: lastActions,
       },
     };

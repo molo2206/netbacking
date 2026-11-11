@@ -4,6 +4,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { PrismaService } from '../../prisma/prisma.service';
+import { writeAudit } from '../../../../libs/common/src/audit/write-audit';
 
 /**
  * ═══════════════════════════════════════════════════════════════════
@@ -32,6 +33,10 @@ export interface AuditLogFilters {
   search?: string;
   startDate?: string;
   endDate?: string;
+  platform?: string;     // MOBILE, WEB, BACK_OFFICE, SYSTEM, API, UNKNOWN (liste séparée par des virgules)
+  deviceType?: string;   // MOBILE_APP, MOBILE, TABLET, DESKTOP, API_CLIENT
+  os?: string;           // « Android », « iOS », « Windows »… (recherche partielle)
+  ipAddress?: string;
 }
 
 @Injectable()
@@ -80,6 +85,13 @@ export class AuditLogService {
       where.entity = entities.length > 1 ? { in: entities } : entities[0];
     }
     if (f.entityId) where.entityId = String(f.entityId).trim();
+    if (f.platform) {
+      const platforms = String(f.platform).toUpperCase().split(',').map((p) => p.trim()).filter(Boolean);
+      where.platform = platforms.length > 1 ? { in: platforms } : platforms[0];
+    }
+    if (f.deviceType) where.deviceType = String(f.deviceType).toUpperCase().trim();
+    if (f.os) where.os = { contains: String(f.os).trim() };
+    if (f.ipAddress) where.ipAddress = { contains: String(f.ipAddress).trim() };
     if (f.level) {
       const level = String(f.level).toUpperCase();
       if (LEVELS.includes(level)) where.level = level;
@@ -100,6 +112,8 @@ export class AuditLogService {
         { action: { contains: q } },
         { entityId: { contains: q } },
         { ipAddress: { contains: q } },
+        { deviceName: { contains: q } },
+        { browser: { contains: q } },
       ];
     }
     return where;
@@ -144,6 +158,17 @@ export class AuditLogService {
       newValue: this.parseJson(log.newValue),
       ipAddress: log.ipAddress,
       userAgent: log.userAgent,
+      // ✅ Origine de l'action
+      platform: log.platform ?? null,
+      device: {
+        type: log.deviceType ?? null,
+        name: log.deviceName ?? null,
+        os: log.os ?? null,
+        browser: log.browser ?? null,
+        id: log.deviceId ?? null,
+        appVersion: log.appVersion ?? null,
+        label: [log.deviceName, log.os, log.browser].filter(Boolean).join(' · ') || null,
+      },
       createdAt: log.createdAt,
     };
   }
@@ -212,6 +237,89 @@ export class AuditLogService {
     return this.list({ ...params });
   }
 
+  // ─────────────────────────── historique d'activité (activity_logs) ───────────────────────────
+
+  /**
+   * Toutes les actions des utilisateurs connectés (enregistrées par l'API Gateway) :
+   * qui, quand, quelle route, résultat, appareil, plateforme.
+   * Filtres : userId, platform, method, activityType, success (true/false), search, startDate, endDate.
+   */
+  async activityList(f: AuditLogFilters & { method?: string; activityType?: string; success?: string | boolean }) {
+    const page = this.toInt(f.page, 1, 100000);
+    const limit = this.toInt(f.limit, 20, 200);
+    const where: any = {};
+    if (f.userId) where.userId = String(f.userId).trim();
+    if (f.activityType) where.activityType = String(f.activityType).toUpperCase().trim();
+    const and: any[] = [];
+    if (f.method) and.push({ activity: { startsWith: `${String(f.method).toUpperCase().trim()} ` } });
+    if (f.platform) and.push({ metadata: { contains: `"platform":"${String(f.platform).toUpperCase().trim()}"` } });
+    if (f.success !== undefined && f.success !== '') {
+      and.push({ metadata: { contains: `"success":${String(f.success) === 'true'}` } });
+    }
+    if (f.search && String(f.search).trim()) {
+      const q = String(f.search).trim();
+      and.push({ OR: [{ activity: { contains: q } }, { description: { contains: q } }, { ipAddress: { contains: q } }, { metadata: { contains: q } }] });
+    }
+    if (and.length) where.AND = and;
+    const gte = this.parseDate(f.startDate, false);
+    const lt = this.parseDate(f.endDate, true);
+    if (gte || lt) where.createdAt = { ...(gte ? { gte } : {}), ...(lt ? { lt } : {}) };
+
+    const [items, total] = await Promise.all([
+      this.prisma.activity_logs.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: { users: { select: { id: true, firstName: true, lastName: true, email: true, clientId: true, role: true } } },
+      }),
+      this.prisma.activity_logs.count({ where }),
+    ]);
+
+    return {
+      message: "Historique d'activité récupéré",
+      data: {
+        data: items.map((a: any) => {
+          const meta = this.parseJson(a.metadata) || {};
+          return {
+            id: a.id,
+            createdAt: a.createdAt,
+            userId: a.userId,
+            userName: a.users ? `${a.users.firstName || ''} ${a.users.lastName || ''}`.trim() : a.userName,
+            userRole: a.userRole || a.users?.role || null,
+            clientId: a.users?.clientId ?? null,
+            activityType: a.activityType,
+            activity: a.activity,
+            description: a.description,
+            success: meta.success ?? null,
+            statusCode: meta.statusCode ?? null,
+            durationMs: meta.durationMs ?? null,
+            platform: meta.platform ?? null,
+            device: {
+              type: meta.deviceType ?? null,
+              name: meta.deviceName ?? null,
+              os: meta.os ?? null,
+              browser: meta.browser ?? null,
+              id: meta.deviceId ?? null,
+              appVersion: meta.appVersion ?? null,
+              label: [meta.deviceName, meta.os, meta.browser].filter(Boolean).join(' · ') || null,
+            },
+            ipAddress: a.ipAddress,
+            userAgent: a.userAgent,
+            origin: meta.origin ?? null,
+            params: meta.params ?? null,
+          };
+        }),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPreviousPage: page > 1,
+      },
+    };
+  }
+
   // ─────────────────────────── listes de filtres ───────────────────────────
 
   async actions() {
@@ -245,6 +353,9 @@ export class AuditLogService {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const where = { createdAt: { gte: since } };
 
+    const byPlatformPromise = this.prisma.auditLog
+      .groupBy({ by: ['platform'], where, _count: { _all: true } })
+      .catch(() => [] as any[]);
     const [total, byLevel, byAction, byEntity, recentErrors, rows] = await Promise.all([
       this.prisma.auditLog.count({ where }),
       this.prisma.auditLog.groupBy({ by: ['level'], where, _count: { _all: true } }),
@@ -294,6 +405,7 @@ export class AuditLogService {
         topActions: byAction.map((r: any) => ({ action: r.action, count: r._count._all })),
         topEntities: byEntity.map((r: any) => ({ entity: r.entity, count: r._count._all })),
         byDay: Object.keys(perDay).sort().map((day) => ({ day, count: perDay[day] })),
+        byPlatform: (await byPlatformPromise).map((r: any) => ({ platform: r.platform || 'NON RENSEIGNÉ', count: r._count._all })),
         recentErrors: recentErrors.map((l) => this.format(l)),
       },
     };
@@ -310,7 +422,7 @@ export class AuditLogService {
 
     // La suppression elle-même est tracée
     try {
-      await this.prisma.auditLog.create({
+      await writeAudit(this.prisma, {
         data: {
           userId: params.adminId || undefined,
           action: 'AUDIT_LOG_DELETED',

@@ -36,6 +36,8 @@ import { CreateResourceDto } from 'apps/user-service/resources/dto/create-resour
 import { UpdateResourceDto } from 'apps/user-service/resources/dto/update-resource.dto';
 import { AssignMultipleResourcesDto } from 'apps/user-service/dto/assign-resource.dto';
 import { firstValueFrom, catchError, timeout } from 'rxjs';
+import { resolveChannel } from '../../../libs/common/src/utils/platform.util';
+import { REQUEST_CONTEXT_FIELD, serializableContext } from '../../../libs/common/src/context/request-context';
 import { TransferDto } from 'apps/transaction-service/dto/create-transaction.dto';
 import { transactions_status, transactions_type, transfers_platform, transfers_type } from '@prisma/client';
 
@@ -86,9 +88,15 @@ export class ApiGatewayController {
     timeoutMs: number = 120000
   ): Promise<T> {
     this.logger.debug(`Sending message to ${pattern}:`, data);
+    // ✅ Contexte de la requête (IP, appareil, navigateur, OS, plateforme) joint au message :
+    //    retiré par le microservice avant le handler, utilisé pour les audits
+    const payload =
+      data && typeof data === 'object' && !Array.isArray(data)
+        ? { ...data, [REQUEST_CONTEXT_FIELD]: serializableContext() }
+        : data;
     try {
       const result = await firstValueFrom(
-        client.send(pattern, data).pipe(
+        client.send(pattern, payload).pipe(
           timeout(timeoutMs),
           catchError((error: any) => {
             this.logger.error(`Error in ${pattern}:`, error);
@@ -204,6 +212,7 @@ export class ApiGatewayController {
       lastName: body.lastName || null,
       platform: platform,
       deviceInfo: body.deviceInfo || userAgent || 'unknown',
+      userAgent: userAgent || null,          // ✅ canal d'inscription (Mobile / Net Banking)
       referralCode: body.referralCode || null,
       lang: lang,
     };
@@ -237,6 +246,8 @@ export class ApiGatewayController {
       {
         ...body,
         lang,
+        // ✅ Token FCM : fcmToken (standard) ou deviceToken / pushToken
+        fcmToken: body.fcmToken || body.deviceToken || body.pushToken || undefined,
         // ✅ Plateforme (MOBILE / WEB) pour les statistiques admin
         platform: body.platform || clientHeader || undefined,
         userAgent: body.userAgent || userAgentHeader || undefined,
@@ -795,6 +806,9 @@ export class ApiGatewayController {
     @Body() body: any,
     @CurrentUser() currentUser: any,
   ) {
+    // ✅ PATCH /users/me est déclaré après /users/:id : sans ceci, « me » était pris pour un id
+    if (id === 'me') return this.updateMyProfile(currentUser, body);
+
     if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN' && currentUser?.id !== id) {
       throw new HttpException('Access denied', HttpStatus.FORBIDDEN);
     }
@@ -802,6 +816,25 @@ export class ApiGatewayController {
       delete body.role;
       delete body.status;
     }
+
+    // ✅ Changement de rôle : mêmes règles que PATCH /users/:id/role (SUPER_ADMIN uniquement,
+    //    pas son propre rôle, dernier super administrateur protégé, audit)
+    let roleResult: any = null;
+    if (body && body.role !== undefined && body.role !== null && body.role !== '') {
+      if (currentUser?.role !== 'SUPER_ADMIN') {
+        throw new HttpException('Access denied. Only a Super Admin can change roles.', HttpStatus.FORBIDDEN);
+      }
+      roleResult = await this.sendUserMessage(
+        'update_user_role',
+        { id, role: body.role, requesterId: currentUser.id, lang: body.lang || 'fr' },
+        'Update user role failed',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (body) delete body.role;
+    const rest = Object.keys(body || {}).filter((k) => k !== 'lang');
+    if (roleResult && !rest.length) return roleResult;
+
     return this.sendUserMessage(
       'update_user',
       { id, ...body },
@@ -939,18 +972,21 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async updateUserRole(
     @Param('id') id: string,
-    @Body('role') role: string,
+    @Body() body: any,
     @CurrentUser() currentUser: any,
+    @Headers('lang') langHeader?: string,
   ) {
     if (currentUser?.role !== 'SUPER_ADMIN') {
       throw new HttpException('Access denied. Super Admin only.', HttpStatus.FORBIDDEN);
     }
+    const role = body?.role ?? body?.newRole;
     if (!role) {
       throw new HttpException('Role is required', HttpStatus.BAD_REQUEST);
     }
+    // ✅ requesterId : contrôles côté service (pas son propre rôle, dernier super admin…)
     return this.sendUserMessage(
       'update_user_role',
-      { id, role },
+      { id, role, requesterId: currentUser.id, reason: body?.reason, lang: langHeader || 'fr' },
       'Update user role failed',
       HttpStatus.BAD_REQUEST
     );
@@ -1152,13 +1188,14 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async registerDeviceToken(
     @CurrentUser() currentUser: any,
-    @Body() body: { fcmToken: string; platform?: string; deviceName?: string },
+    @Body() body: any,
     @Headers('x-client') clientHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
-    const { fcmToken } = body;
+    // ✅ Noms de champ acceptés : fcmToken (standard), token, deviceToken, pushToken
+    const fcmToken = String(body?.fcmToken || body?.deviceToken || body?.pushToken || body?.token || '').trim();
     if (!fcmToken) {
       throw new HttpException('FCM token is required', HttpStatus.BAD_REQUEST);
     }
@@ -1167,8 +1204,8 @@ export class ApiGatewayController {
       {
         userId: currentUser.id,
         fcmToken,
-        platform: body.platform || clientHeader || 'MOBILE',
-        deviceName: body.deviceName,
+        platform: body?.platform || clientHeader || 'MOBILE',
+        deviceName: body?.deviceName,
       },
       'Failed to register device token',
       HttpStatus.INTERNAL_SERVER_ERROR
@@ -1478,6 +1515,7 @@ export class ApiGatewayController {
     @Query('entity') entity?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query() extra?: any,
   ) {
     if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
       throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
@@ -1486,9 +1524,48 @@ export class ApiGatewayController {
     const limitNum = limit ? parseInt(limit, 10) : 10;
     return this.sendUserMessage(
       'get_audit_logs',
-      { page: pageNum, limit: limitNum, userId, action, entity, startDate, endDate },
+      {
+        page: pageNum, limit: limitNum, userId, action, entity, startDate, endDate,
+        // ✅ Filtres d'origine : plateforme, type d'appareil, OS, IP, niveau, recherche
+        platform: extra?.platform, deviceType: extra?.deviceType, os: extra?.os,
+        ipAddress: extra?.ipAddress, level: extra?.level, search: extra?.search, entityId: extra?.entityId,
+      },
       'Failed to get audit logs',
       HttpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
+
+  /**
+   * Historique d'activité : TOUTES les actions des utilisateurs connectés
+   * (qui, quand, quelle action, résultat, appareil, plateforme).
+   * Filtres : userId, platform (MOBILE|WEB|BACK_OFFICE|API), method (POST|PUT|PATCH|DELETE|GET),
+   *           activityType, success (true|false), search, startDate, endDate, page, limit
+   */
+  @Get('admin/activity-logs')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async getActivityLogs(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+  ) {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
+      throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
+    }
+    return this.sendUserMessage(
+      'get_activity_logs',
+      {
+        page: this.toInt(query.page, 1),
+        limit: this.toInt(query.limit, 20),
+        userId: query.userId,
+        platform: query.platform,
+        method: query.method,
+        activityType: query.activityType,
+        success: query.success,
+        search: query.search,
+        startDate: query.startDate || query.from,
+        endDate: query.endDate || query.to,
+      },
+      'Failed to get activity logs',
+      HttpStatus.INTERNAL_SERVER_ERROR,
     );
   }
 
@@ -1639,16 +1716,20 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async deposit(
     @CurrentUser() currentUser: any,
-    @Body() body: { accountId: string; amount: number; description?: string; reference?: string },
+    @Body() body: any,
     @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgent?: string,
+    @Headers('authorization') authorization?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
     const lang = langHeader || 'fr';
+    const ch = await this.operationChannel(body, clientHeader, userAgent, authorization);
     return this.sendTransactionMessage(
       'transaction.deposit',
-      { ...body, initiatedBy: currentUser.id, lang },
+      { ...body, ...ch, initiatedBy: currentUser.id, lang },
       'Deposit failed',
       HttpStatus.BAD_REQUEST,
     );
@@ -1658,52 +1739,133 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async withdraw(
     @CurrentUser() currentUser: any,
-    @Body() body: { accountId: string; amount: number; description?: string },
+    @Body() body: any,
     @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgent?: string,
+    @Headers('authorization') authorization?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
     const lang = langHeader || 'fr';
+    const ch = await this.operationChannel(body, clientHeader, userAgent, authorization);
     return this.sendTransactionMessage(
       'transaction.withdraw',
-      { ...body, initiatedBy: currentUser.id, lang },
+      { ...body, ...ch, initiatedBy: currentUser.id, lang },
       'Withdrawal failed',
       HttpStatus.BAD_REQUEST,
     );
   }
 
+  /**
+   * Transfert protégé par OTP (même comportement mobile et web).
+   *  1er appel SANS code        → { requiresOtp: true } + SMS envoyé
+   *  2e appel AVEC otpCode (6 chiffres) → transfert exécuté
+   * Le code est accepté sous les noms : otpCode, otp, code, otp_code, verificationCode.
+   */
   @Post('transactions/transfer')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async transfer(
     @CurrentUser() currentUser: any,
-    @Body() body: {
-      senderAccountNumber: string;
-      receiverAccountNumber: string;
-      receiverName?: string;
-      receiverPhone?: string;
-      receiverEmail?: string;
-      amount: number;
-      fees?: number;
-      description?: string;
-      currency?: string;
-      type?: transfers_type;
-      platform?: transfers_platform;
-      saveBeneficiary?: boolean;
-      otpCode?: string;                    // ✅ Seule protection du transfert (plus de PIN)
-    },
+    @Body() body: any,
     @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgent?: string,
+    @Headers('authorization') authorization?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
     const lang = langHeader || 'fr';
+    const otpCode = this.pickTransferOtp(body);
+    const ch = await this.operationChannel(body, clientHeader, userAgent, authorization);
+    const { otp, code, otp_code, verificationCode, pin, ...rest } = body || {};
     return this.sendTransactionMessage(
       'transaction.transfer',
-      { ...body, initiatedBy: currentUser.id, lang },
+      {
+        ...rest,
+        ...ch,
+        otpCode,
+        initiatedBy: currentUser.id,
+        lang,
+        client: clientHeader || this.detectClient(userAgent),
+      },
       'Transfer failed',
       HttpStatus.BAD_REQUEST,
     );
+  }
+
+  /**
+   * Demander (ou redemander) le code OTP d'un transfert sans l'exécuter.
+   * Body : le même que pour le transfert (comptes, montant, devise), sans otpCode.
+   */
+  @Post('transactions/transfer/request-otp')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async requestTransferOtp(
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgent?: string,
+    @Headers('authorization') authorization?: string,
+  ) {
+    if (!currentUser || !currentUser.id) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+    const lang = langHeader || 'fr';
+    const { otpCode, otp, code, otp_code, verificationCode, pin, ...rest } = body || {};
+    const ch = await this.operationChannel(body, clientHeader, userAgent, authorization);
+    return this.sendTransactionMessage(
+      'transaction.transfer',
+      {
+        ...rest,
+        ...ch,
+        otpCode: undefined,
+        forceNewOtp: true,
+        initiatedBy: currentUser.id,
+        lang,
+        client: clientHeader || this.detectClient(userAgent),
+      },
+      'OTP request failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /** Code OTP envoyé par le front, quel que soit le nom du champ. */
+  private pickTransferOtp(body: any): string | undefined {
+    if (!body) return undefined;
+    const raw = [body.otpCode, body.otp, body.code, body.otp_code, body.verificationCode]
+      .find((v) => v !== undefined && v !== null && String(v).trim() !== '' &&
+        !['null', 'undefined'].includes(String(v).trim().toLowerCase()));
+    return raw === undefined ? undefined : String(raw).trim();
+  }
+
+  /**
+   * Canal d'une opération : MOBILE (Mobile Banking) ou WEB (Net Banking).
+   * x-client → platform du body → plateforme de la session → user-agent.
+   * `platform` = valeur attendue par la banque (Mobile / Online).
+   */
+  private async operationChannel(body: any, clientHeader?: string, userAgent?: string, authorization?: string) {
+    const channel = await resolveChannel({
+      client: clientHeader,
+      platform: body?.platform,
+      token: authorization,
+      userAgent,
+    });
+    return {
+      channel,
+      platform: channel === 'WEB' ? 'Online' : 'Mobile',
+    };
+  }
+
+  /** Mobile ou web, déduit du user-agent (pour les logs). */
+  private detectClient(userAgent?: string): string {
+    const ua = String(userAgent || '').toLowerCase();
+    if (!ua) return 'inconnu';
+    if (/okhttp|dart|cfnetwork|react-native|expo|android|iphone|ipad/.test(ua) && !/mozilla.*(windows|macintosh|x11)/.test(ua)) return 'mobile';
+    if (/mozilla|chrome|safari|firefox|edge/.test(ua)) return 'web';
+    return ua.slice(0, 40);
   }
 
   @Get('transactions/:id')
@@ -2783,6 +2945,22 @@ export class ApiGatewayController {
   // ADMIN — NOTIFICATIONS & EMAIL
   // ═════════════════════════════════════════════════════════════════════
 
+  // Diagnostic du push : état de Firebase, appareils avec token, dernières notifications
+  //   ?userId=… pour un utilisateur précis
+  @Get('admin/notifications/push-status')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminPushStatus(
+    @CurrentUser() currentUser: any,
+    @Query('userId') userId?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.notifications.pushStatus',
+      { userId: userId || undefined },
+      'Failed to get push status', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
   // body : { title, body, userId? , audience?: 'ALL' | 'MOBILE' | 'WEB' }
   @Post('admin/notifications/send')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
@@ -3194,6 +3372,135 @@ export class ApiGatewayController {
       },
       'Failed to get SMS logs', HttpStatus.INTERNAL_SERVER_ERROR,
     );
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // ADMIN — RAPPORTS SÉPARÉS : MOBILE BANKING / NET BANKING
+  //   Filtres opérations : from, to (AAAA-MM-JJ, défaut 30 derniers jours),
+  //   type (TRANSFER,DEPOSIT,WITHDRAWAL), currency, status, userId, accountNumber,
+  //   minAmount, maxAmount, search, groupBy (day|week|month), sort, page, limit
+  //   Comptes : from, to, channel (MOBILE|WEB), status, search, page, limit
+  // ═════════════════════════════════════════════════════════════════════
+
+  /** Les deux canaux côte à côte : opérations, comptes créés, utilisateurs actifs. */
+  @Get('admin/reports/channels')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminChannelsReport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.reports.channels', this.transactionFilters(query, langHeader),
+      'Failed to get channels report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  /** Rapport Mobile Banking (opérations + comptes créés sur l'application mobile). */
+  @Get('admin/reports/mobile-banking')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminMobileBankingReport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.reports.channel', { ...this.transactionFilters(query, langHeader), channel: 'MOBILE' },
+      'Failed to get Mobile Banking report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  /** Rapport Net Banking (opérations + comptes créés sur le site web). */
+  @Get('admin/reports/net-banking')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminNetBankingReport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.reports.channel', { ...this.transactionFilters(query, langHeader), channel: 'WEB' },
+      'Failed to get Net Banking report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Get('admin/reports/mobile-banking/export')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminMobileBankingExport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Res() res: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    const result = await this.sendUserMessage(
+      'admin.reports.channelCsv', { ...this.transactionFilters(query, langHeader), channel: 'MOBILE' },
+      'Failed to export Mobile Banking report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return this.sendCsv(res, result);
+  }
+
+  @Get('admin/reports/net-banking/export')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminNetBankingExport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Res() res: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    const result = await this.sendUserMessage(
+      'admin.reports.channelCsv', { ...this.transactionFilters(query, langHeader), channel: 'WEB' },
+      'Failed to export Net Banking report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return this.sendCsv(res, result);
+  }
+
+  private accountReportFilters(query: any, lang?: string) {
+    return {
+      from: query.from || query.startDate,
+      to: query.to || query.endDate,
+      channel: query.channel || query.platform,
+      status: query.status,
+      search: query.search,
+      page: this.toInt(query.page, 1),
+      limit: this.toInt(query.limit, 20),
+      lang: lang || 'fr',
+    };
+  }
+
+  /** Comptes créés, par canal : ?channel=MOBILE (Mobile Banking) ou WEB (Net Banking). */
+  @Get('admin/reports/accounts')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminAccountsReport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    return this.sendUserMessage(
+      'admin.reports.accounts', this.accountReportFilters(query, langHeader),
+      'Failed to get accounts report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  @Get('admin/reports/accounts/export')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminAccountsExport(
+    @CurrentUser() currentUser: any,
+    @Query() query: any,
+    @Res() res: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    this.assertAdmin(currentUser);
+    const result = await this.sendUserMessage(
+      'admin.reports.accountsCsv', this.accountReportFilters(query, langHeader),
+      'Failed to export accounts report', HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+    return this.sendCsv(res, result);
   }
 
   @Get('admin/reports/operations')

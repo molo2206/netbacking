@@ -51,4 +51,9 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   lang?: string;
+
+  /** User-agent de la requête (renseigné par l'API Gateway) : canal d'inscription. */
+  @IsOptional()
+  @IsString()
+  userAgent?: string;
 }

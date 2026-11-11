@@ -7,6 +7,8 @@ import { RpcException } from '@nestjs/microservices';
 import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from './prisma/prisma.service';
 
 /**
@@ -41,36 +43,133 @@ export class NotificationService implements OnModuleInit {
   }
 
   // ─────────────────────────── Firebase ───────────────────────────
+  //
+  // Même configuration qu'AccesPay : FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL,
+  // FIREBASE_PRIVATE_KEY dans le .env. Sont aussi acceptés (dans cet ordre) :
+  //   FIREBASE_SERVICE_ACCOUNT_JSON  : contenu JSON du compte de service (ou en base64)
+  //   FIREBASE_SERVICE_ACCOUNT_PATH  : chemin du fichier JSON (ou GOOGLE_APPLICATION_CREDENTIALS)
+  //   firebase-credentials.json      : à la racine du projet ou dans apps/notification-service/
+
+  private lastInitError: string | null = null;
+  private credentialSource: string | null = null;
+  private projectId: string | null = null;
+  private lastPushError: { code: string | null; message: string; at: Date } | null = null;
+
+  /** Clé privée lisible quel que soit son format dans le .env (guillemets, \n, retours Windows). */
+  private normalizePrivateKey(raw?: string | null): string | null {
+    if (!raw) return null;
+    let key = String(raw).trim();
+    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+      key = key.slice(1, -1);
+    }
+    key = key.replace(/\\n/g, '\n').replace(/\r\n/g, '\n').replace(/\\r/g, '');
+    if (!key.includes('BEGIN PRIVATE KEY')) return null;
+    if (!key.endsWith('\n')) key += '\n';
+    return key;
+  }
+
+  private readServiceAccount(): { projectId: string; clientEmail: string; privateKey: string; source: string } | null {
+    const fromObject = (obj: any, source: string) => {
+      const projectId = obj?.project_id || obj?.projectId;
+      const clientEmail = obj?.client_email || obj?.clientEmail;
+      const privateKey = this.normalizePrivateKey(obj?.private_key || obj?.privateKey);
+      return projectId && clientEmail && privateKey ? { projectId, clientEmail, privateKey, source } : null;
+    };
+
+    // 1. JSON complet dans une variable
+    const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    if (rawJson && rawJson.trim()) {
+      try {
+        const text = rawJson.trim().startsWith('{') ? rawJson : Buffer.from(rawJson, 'base64').toString('utf8');
+        const acc = fromObject(JSON.parse(text), 'FIREBASE_SERVICE_ACCOUNT_JSON');
+        if (acc) return acc;
+      } catch (err) {
+        this.logger.error(`FIREBASE_SERVICE_ACCOUNT_JSON illisible : ${err?.message || err}`);
+      }
+    }
+
+    // 2. Variables séparées (configuration AccesPay)
+    const envAcc = fromObject(
+      {
+        projectId: process.env.FIREBASE_PROJECT_ID?.trim().replace(/^["']|["']$/g, ''),
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL?.trim().replace(/^["']|["']$/g, ''),
+        privateKey: process.env.FIREBASE_PRIVATE_KEY,
+      },
+      '.env (FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY)',
+    );
+    if (envAcc) return envAcc;
+
+    // 3. Fichier JSON du compte de service
+    const candidates = [
+      process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+      process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      path.join(process.cwd(), 'firebase-credentials.json'),
+      path.join(process.cwd(), 'apps/notification-service/firebase-credentials.json'),
+    ].filter(Boolean) as string[];
+    for (const file of candidates) {
+      try {
+        if (!fs.existsSync(file) || fs.statSync(file).size === 0) continue;
+        const acc = fromObject(JSON.parse(fs.readFileSync(file, 'utf8')), file);
+        if (acc) return acc;
+      } catch (err) {
+        this.logger.error(`Fichier Firebase ${file} illisible : ${err?.message || err}`);
+      }
+    }
+    return null;
+  }
 
   private initializeFirebase() {
     try {
       const existing = getApps();
       if (existing.length > 0) {
         this.firebaseApp = existing[0];
+        this.credentialSource = this.credentialSource || 'application Firebase déjà initialisée';
       } else {
-        const projectId = process.env.FIREBASE_PROJECT_ID;
-        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-        const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-        if (!projectId || !clientEmail || !privateKey) {
-          this.logger.warn(
-            '⚠️ FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY manquants : push désactivé (les notifications restent enregistrées).',
+        const account = this.readServiceAccount();
+        if (!account) {
+          const missing = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'].filter(
+            (k) => !process.env[k] || !String(process.env[k]).trim(),
           );
+          this.lastInitError = missing.length
+            ? `Variables manquantes dans le .env : ${missing.join(', ')}`
+            : 'FIREBASE_PRIVATE_KEY invalide (doit contenir « -----BEGIN PRIVATE KEY----- »)';
+          this.logger.warn(`⚠️ Push désactivé : ${this.lastInitError} (les notifications restent enregistrées).`);
           return;
         }
-        this.firebaseApp = initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+        this.firebaseApp = initializeApp({
+          credential: cert({ projectId: account.projectId, clientEmail: account.clientEmail, privateKey: account.privateKey }),
+          projectId: account.projectId,
+        });
+        this.credentialSource = account.source;
+        this.projectId = account.projectId;
       }
       this.messaging = getMessaging(this.firebaseApp);
-      this.logger.log('✅ Firebase Admin initialisé');
+      this.lastInitError = null;
+      this.logger.log(
+        `✅ Firebase Admin initialisé (projet ${this.projectId || '?'}, source : ${this.credentialSource}, Node ${process.version})`,
+      );
     } catch (error) {
       this.firebaseApp = null;
       this.messaging = null;
-      this.logger.error(`❌ Initialisation Firebase impossible : ${error?.message || error}`);
+      this.lastInitError = `${error?.message || error}`;
+      this.logger.error(`❌ Initialisation Firebase impossible (Node ${process.version}) : ${this.lastInitError}`);
     }
   }
 
   get firebaseReady(): boolean {
     return !!this.messaging;
+  }
+
+  /** État du push : utilisé par l'admin pour diagnostiquer les notifications. */
+  pushStatus() {
+    return {
+      firebase: this.firebaseReady ? 'connected' : 'disabled',
+      projectId: this.projectId,
+      credentialSource: this.credentialSource,
+      initError: this.lastInitError,
+      lastPushError: this.lastPushError,
+      nodeVersion: process.version,
+    };
   }
 
   private ensureStringValues(obj: any): Record<string, string> {
@@ -137,6 +236,8 @@ export class NotificationService implements OnModuleInit {
   ) {
     const target = await this.latestToken(userId);
     let pushStatus: 'SENT' | 'FAILED' | 'PENDING' = 'PENDING';
+    // Configuration corrigée sans redémarrage complet : nouvelle tentative d'initialisation
+    if (target && !this.messaging) this.initializeFirebase();
 
     if (target && this.messaging) {
       try {
@@ -152,6 +253,7 @@ export class NotificationService implements OnModuleInit {
       } catch (error) {
         pushStatus = 'FAILED';
         const code = error?.code || error?.errorInfo?.code;
+        this.lastPushError = { code: code || null, message: String(error?.message || error).slice(0, 300), at: new Date() };
         this.logger.error(`❌ [FCM] ${code || ''} ${error?.message || error}`);
         if (
           code === 'messaging/registration-token-not-registered' ||
@@ -314,7 +416,7 @@ export class NotificationService implements OnModuleInit {
     return {
       status: 'ok',
       service: 'notification-service',
-      firebase: this.firebaseReady ? 'connected' : 'disabled',
+      ...this.pushStatus(),
       timestamp: new Date().toISOString(),
     };
   }

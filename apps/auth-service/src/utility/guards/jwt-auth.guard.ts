@@ -14,6 +14,7 @@ import {
   checkSession,
   isSessionCheckEnabled,
 } from '../../../../../libs/common/src/security/session-validator';
+import { getRequestContext } from '../../../../../libs/common/src/context/request-context';
 
 /**
  * Routes accessibles avec un mot de passe TEMPORAIRE (mustChangePassword=true).
@@ -103,6 +104,11 @@ export class JwtAuthGuard implements CanActivate {
 
       request.currentUser = user;
       request.user = user;
+
+      // ✅ Auteur de la requête : ajouté au contexte transmis aux microservices (audits)
+      const ctx = getRequestContext();
+      ctx.userId = user.id;
+      ctx.userRole = user.role;
 
       // ✅ Mot de passe temporaire non encore changé → seules quelques routes sont permises
       if (payload.mustChangePassword === true) {

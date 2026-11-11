@@ -31,6 +31,11 @@ export class LoginDto {
   @IsString()
   platform?: string;
 
+  /** Identifiant stable de l'appareil (facultatif) : une session par appareil. */
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
+
   @IsOptional()
   @IsString()
   lang?: string;

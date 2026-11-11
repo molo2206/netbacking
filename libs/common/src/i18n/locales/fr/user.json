@@ -46,5 +46,14 @@
   "checkbook_status_retrieved": "Statut du chéquier récupéré avec succès",
   "checkbook_status_failed": "Impossible de récupérer le statut du chéquier",
   "checkbook_blocked": "Chéquier bloqué avec succès",
-  "checkbook_block_failed": "Le blocage du chéquier a échoué"
+  "checkbook_block_failed": "Le blocage du chéquier a échoué",
+  "role_invalid": "Rôle invalide : {{role}}. Rôles acceptés : {{allowed}}.",
+  "role_required": "Le rôle est obligatoire.",
+  "cannot_change_own_role": "Vous ne pouvez pas modifier votre propre rôle.",
+  "role_change_super_admin_only": "Seul un super administrateur peut modifier le rôle d'un utilisateur.",
+  "last_super_admin": "Impossible : cet utilisateur est le dernier super administrateur actif. Nommez d'abord un autre super administrateur.",
+  "role_unchanged": "L'utilisateur a déjà le rôle {{role}}.",
+  "role_updated_success": "Rôle modifié : {{oldRole}} → {{newRole}}.",
+  "role_admin_without_email": "Attention : cet administrateur n'a pas d'adresse e-mail ; il ne pourra pas se connecter à l'administration tant qu'une adresse n'est pas renseignée.",
+  "role_admin_without_client_id": "Attention : cet administrateur n'a pas de code client ; il ne pourra pas se connecter à l'application mobile ni au Net Banking."
 }

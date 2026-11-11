@@ -5,6 +5,9 @@ import { NestFactory } from '@nestjs/core';
 import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { AuthServiceModule } from './auth-service.module';
 import { Logger } from '@nestjs/common';
+import { RequestContextInterceptor } from '../../../libs/common/src/context/request-context.interceptor';
+import { ensureTrackingColumns } from '../../../libs/common/src/audit/write-audit';
+import { getSharedPrisma } from '../../../libs/common/src/db/shared-prisma';
 
 async function bootstrap() {
   const app = await NestFactory.createMicroservice<MicroserviceOptions>(
@@ -25,6 +28,11 @@ async function bootstrap() {
   );
 
   const logger = new Logger('AuthService');
+
+  // ✅ Contexte de la requête (IP, appareil, plateforme) transmis par l'API Gateway
+  app.useGlobalInterceptors(new RequestContextInterceptor());
+  // ✅ Colonnes de traçabilité (appareil / plateforme) présentes en base
+  await ensureTrackingColumns(getSharedPrisma(), 'auth-service');
 
   await app.listen();
   logger.log('🔐 Auth microservice is running with RabbitMQ');

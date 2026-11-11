@@ -33,6 +33,9 @@ export class TransactionServiceController {
     lang?: string;
     saveBeneficiary?: boolean;
     otpCode?: string;                     // ✅ Seule protection du transfert (plus de PIN)
+    forceNewOtp?: boolean;
+    client?: string;
+    channel?: string;                     // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     try {
       if (!data.initiatedBy) {
@@ -58,6 +61,9 @@ export class TransactionServiceController {
         lang: data.lang || 'fr',
         saveBeneficiary: data.saveBeneficiary,
         otpCode: data.otpCode,             // ✅ AJOUT
+        forceNewOtp: data.forceNewOtp,     // route /transactions/transfer/request-otp
+        client: data.client,
+        channel: data.channel,
       });
 
       // Étape 1 : OTP envoyé → on le signale clairement au front
@@ -66,6 +72,8 @@ export class TransactionServiceController {
           success: true,
           requiresOtp: true,
           message: result.message,
+          phone: (result as any).phone ?? null,
+          expiresIn: (result as any).expiresIn ?? null,
           data: null,
         };
       }
@@ -97,6 +105,7 @@ export class TransactionServiceController {
     initiatedBy?: string;
     lang?: string;
     platform?: 'Mobile' | 'Online';     // ← ajouté
+    channel?: string;                   // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     try {
       if (!data.accountNumber) {
@@ -122,6 +131,7 @@ export class TransactionServiceController {
         initiatedBy: data.initiatedBy,
         lang: data.lang || 'fr',
         platform: data.platform || 'Mobile',
+        channel: data.channel,
       });
     } catch (error) {
       if (error instanceof RpcException) throw error;
@@ -144,6 +154,7 @@ export class TransactionServiceController {
     initiatedBy?: string;
     lang?: string;
     platform?: 'Mobile' | 'Online';     // ← ajouté
+    channel?: string;                   // MOBILE (Mobile Banking) / WEB (Net Banking)
   }) {
     try {
       if (!data.accountNumber) {
@@ -169,6 +180,7 @@ export class TransactionServiceController {
         initiatedBy: data.initiatedBy,
         lang: data.lang || 'fr',
         platform: data.platform || 'Mobile',
+        channel: data.channel,
       });
     } catch (error) {
       if (error instanceof RpcException) throw error;

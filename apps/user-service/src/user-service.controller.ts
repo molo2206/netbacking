@@ -61,6 +61,11 @@ export class UserServiceController {
     try { return await this.userNotifications.remove(data); } catch (e) { throw this.toRpcError(e, 404); }
   }
 
+  @MessagePattern('admin.notifications.pushStatus')
+  async adminPushStatus(@Payload() data: any) {
+    try { return await this.userNotifications.pushDiagnostic(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
   @MessagePattern('admin.notifications.send')
   async adminSendNotification(@Payload() data: any) {
     try { return await this.userNotifications.adminSend(data); } catch (e) { throw this.toRpcError(e); }
@@ -81,6 +86,33 @@ export class UserServiceController {
   @MessagePattern('admin.stats.transactions')
   async adminStatsTransactions(@Payload() data: any) {
     try { return await this.adminStats.transactionVolumes(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  // ==================== ADMIN : RAPPORTS MOBILE BANKING / NET BANKING ====================
+
+  @MessagePattern('admin.reports.channels')
+  async adminChannelsReport(@Payload() data: any) {
+    try { return await this.adminStats.channelsComparison(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.reports.channel')
+  async adminChannelReport(@Payload() data: any) {
+    try { return await this.adminStats.channelReport(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.reports.channelCsv')
+  async adminChannelCsv(@Payload() data: any) {
+    try { return await this.adminStats.channelCsv(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.reports.accounts')
+  async adminAccountsReport(@Payload() data: any) {
+    try { return await this.adminStats.accountsByChannel(data || {}); } catch (e) { throw this.toRpcError(e); }
+  }
+
+  @MessagePattern('admin.reports.accountsCsv')
+  async adminAccountsCsv(@Payload() data: any) {
+    try { return await this.adminStats.accountsCsv(data || {}); } catch (e) { throw this.toRpcError(e); }
   }
 
   @MessagePattern('admin.transactions.list')
@@ -246,6 +278,19 @@ export class UserServiceController {
         message: error instanceof Error ? error.message : 'Unknown error',
         statusCode: 400,
       });
+    }
+  }
+
+  // ✅ Handler manquant : la route PATCH /users/:id/role envoyait ce message
+  //    sans que personne ne l'écoute → la modification du rôle échouait toujours.
+  @MessagePattern('update_user_role')
+  async updateUserRole(
+    @Payload() data: { id: string; role: string; requesterId: string; lang?: string; reason?: string },
+  ) {
+    try {
+      return await this.userService.updateUserRole(data);
+    } catch (error) {
+      throw this.toRpcError(error);
     }
   }
 
