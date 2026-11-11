@@ -15,6 +15,8 @@ const common = {
   max_memory_restart: '600M',
   env: {
     NODE_ENV: 'production',
+    // Navigateur utilisé pour générer les relevés PDF (installé par scripts/deploy.sh)
+    PUPPETEER_EXECUTABLE_PATH: '/usr/bin/google-chrome-stable',
     DATABASE_URL: 'mysql://admin:admin2025@localhost:3306/netbacking_db',
   },
 };
@@ -25,6 +27,6 @@ module.exports = {
     { ...common, name: 'netbacking-auth', script: 'dist/apps/auth-service/main.js' },
     { ...common, name: 'netbacking-user', script: 'dist/apps/user-service/main.js' },
     { ...common, name: 'netbacking-transaction', script: 'dist/apps/transaction-service/main.js' },
-    { ...common, name: 'netbacking-audit', script: 'dist/apps/audit-service/main.js', env: { ...common.env, port: 3017 } },
+    // netbacking-audit retiré : service vide (« Hello World »), le journal d'audit est géré par netbacking-user
   ],
 };

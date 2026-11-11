@@ -18,7 +18,7 @@ type SmsKind = 'OTP' | 'PASSWORD' | 'NOTIFICATION';
 export class SmsService {
   private readonly apiId = 'API42928758643';
   private readonly apiPassword = '@@Accesfina!2026';
-  private readonly sender = 'AccessFinance';
+  private readonly sender = 'ACCESFIN';
   private readonly apiUrl = 'https://papi.dream-digital.info/api/SendSms';
   private readonly logEnabled =
     String(process.env.SMS_LOG_ENABLED ?? 'true').toLowerCase() !== 'false';
