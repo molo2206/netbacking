@@ -35,6 +35,94 @@ export interface BankOperationInfo {
   currency: string;
   accountNumber?: string | null; // compte de l'utilisateur notifié
   balance?: number | string | null;
+  fees?: number | string | null;
+  description?: string | null;
+  date?: Date | string | null;
+}
+
+// ─────────────────────────── détail de l'opération (push) ───────────────────────────
+
+const LOCALES: Record<string, string> = { fr: 'fr-FR', en: 'en-US', sw: 'sw-KE' };
+
+function formatAmount(value: any, currency: string, lang: string): string | null {
+  if (value === null || value === undefined || value === '' || value === '-') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const txt = new Intl.NumberFormat(LOCALES[lang] || 'fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  return `${txt} ${currency}`;
+}
+
+function formatDate(value: any, lang: string): string {
+  const d = value ? new Date(value) : new Date();
+  const date = isNaN(d.getTime()) ? new Date() : d;
+  return date.toLocaleString(LOCALES[lang] || 'fr-FR', {
+    timeZone: process.env.APP_TIMEZONE || 'Africa/Lubumbashi',
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/**
+ * Détail complet de l'opération, affiché dans la notification et dans l'écran
+ * « Notifications » de l'application (liste libellé / valeur, dans la langue de l'utilisateur).
+ */
+function buildOperationDetails(
+  deps: BankNotificationDeps,
+  kind: BankOperationKind,
+  op: BankOperationInfo,
+  counterparty: { name?: string | null; accountNumber?: string | null } | undefined,
+  lang: string,
+) {
+  const t = (k: string) => deps.i18nService.translate(`notifications.label.${k}`, lang);
+  const amount = formatAmount(op.amount, op.currency, lang);
+  const fees = Number(op.fees || 0) > 0 ? formatAmount(op.fees, op.currency, lang) : null;
+  const total = fees && kind === 'transfer_sent' ? formatAmount(Number(op.amount) + Number(op.fees), op.currency, lang) : null;
+  const balance = formatAmount(op.balance, op.currency, lang);
+  const date = formatDate(op.date, lang);
+  const reference = op.reference || op.id || null;
+
+  const rows: Array<[string, string | null | undefined]> = [[t('operation'), t(`op_${kind}`)], [t('amount'), amount]];
+  if (fees) rows.push([t('fees'), fees]);
+  if (total) rows.push([t('total'), total]);
+  if (kind === 'transfer_sent') {
+    rows.push([t('to'), counterparty?.name || null], [t('toAccount'), counterparty?.accountNumber || null], [t('fromAccount'), op.accountNumber]);
+  } else if (kind === 'transfer_received') {
+    rows.push([t('from'), counterparty?.name || null], [t('fromAccount'), counterparty?.accountNumber || null], [t('account'), op.accountNumber]);
+  } else {
+    rows.push([t('account'), op.accountNumber]);
+  }
+  rows.push([t('description'), op.description || null], [t('reference'), reference], [t('date'), date], [t('balance'), balance], [t('status'), t('status_success')]);
+
+  const details = rows
+    .filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    .map(([label, value]) => ({ label, value: String(value) }));
+
+  // Lignes ajoutées sous la phrase principale du push (visibles sur le téléphone)
+  const pushLines = [
+    reference ? `${t('reference')} : ${reference}` : null,
+    `${t('date')} : ${date}`,
+    fees ? `${t('fees')} : ${fees}` : null,
+    balance ? `${t('balance')} : ${balance}` : null,
+  ].filter(Boolean) as string[];
+
+  const operation = {
+    kind,
+    type: kind.startsWith('transfer') ? 'TRANSFER' : kind === 'deposit' ? 'DEPOSIT' : 'WITHDRAWAL',
+    direction: kind === 'transfer_sent' || kind === 'withdrawal' ? 'DEBIT' : 'CREDIT',
+    amount: Number(op.amount),
+    fees: Number(op.fees || 0),
+    currency: op.currency,
+    accountNumber: op.accountNumber || null,
+    counterpartyName: counterparty?.name || null,
+    counterpartyAccount: counterparty?.accountNumber || null,
+    description: op.description || null,
+    reference,
+    transactionId: op.id || null,
+    balance: op.balance !== null && op.balance !== undefined && op.balance !== '-' && Number.isFinite(Number(op.balance)) ? Number(op.balance) : null,
+    status: 'COMPLETED',
+    date: (op.date ? new Date(op.date) : new Date()).toISOString(),
+  };
+
+  return { details, pushLines, operation, formattedAmount: amount };
 }
 
 export interface NotifiedUser {
@@ -91,12 +179,18 @@ export async function notifyBankOperation(
   try {
     if (await deps.shouldSendPush(user.id)) {
       let type = NotificationType.TRANSACTION;
+      const detail = buildOperationDetails(deps, kind, op, counterparty, lang);
       const data: Record<string, any> = {
-        amount: op.amount,
+        amount: detail.formattedAmount ? detail.formattedAmount.replace(` ${op.currency}`, '') : op.amount,
         currency: op.currency,
         accountNumber: op.accountNumber || '',
         reference: op.reference || op.id || '',
         balance,
+        // ✅ Informations complètes de l'opération (écran de détail de la notification)
+        operation: detail.operation,
+        details: detail.details,
+        pushLines: detail.pushLines,
+        transactionId: op.id || '',
       };
 
       if (kind === 'deposit' || kind === 'withdrawal') {

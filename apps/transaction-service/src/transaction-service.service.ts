@@ -854,6 +854,9 @@ export class TransactionServiceService {
           reference: bankData?.reference ?? null,
           amount: data.amount,
           currency,
+          fees: bankData?.fees ?? data.fees ?? 0,
+          description: data.description || null,
+          date: bankData?.transactionDate ?? bankData?.date ?? new Date(),
         };
 
         // Expéditeur
@@ -998,6 +1001,9 @@ export class TransactionServiceService {
             currency,
             accountNumber: data.accountNumber,
             balance: bankData?.balance ?? bankData?.newBalance ?? null,
+            fees: bankData?.fees ?? 0,
+            description: data.description || null,
+            date: bankData?.transactionDate ?? bankData?.date ?? new Date(),
           });
         }
       }
@@ -1103,6 +1109,9 @@ export class TransactionServiceService {
             currency,
             accountNumber: data.accountNumber,
             balance: bankData?.balance ?? bankData?.newBalance ?? null,
+            fees: bankData?.fees ?? 0,
+            description: data.description || null,
+            date: bankData?.transactionDate ?? bankData?.date ?? new Date(),
           });
         }
       }

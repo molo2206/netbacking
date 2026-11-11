@@ -38,7 +38,9 @@ export class NotificationHelper {
     if (!userId) return;
     const { title, body } = this.getTranslatedContent(type, data, lang);
 
-    const pushData: Record<string, any> = { ...(data || {}) };
+    // pushLines : seulement pour le texte du push (le détail complet est dans `details` / `operation`)
+    const { pushLines: _pushLines, ...rest } = data || {};
+    const pushData: Record<string, any> = { ...rest };
     if (entity) pushData.entity = entity;
     if (entityId) pushData.entityId = entityId;
 
@@ -126,6 +128,10 @@ export class NotificationHelper {
     if (body === `notifications.${key}.body`) {
       body = data?.message || this.i18nService.translate('notifications.default.body', lang);
     }
-    return { title, body: body.replace(/\s+/g, ' ').trim() };
+    body = body.replace(/\s+/g, ' ').trim();
+    // ✅ Détail de l'opération sous la phrase principale (référence, date, frais, solde…)
+    const lines: string[] = Array.isArray(data?.pushLines) ? data.pushLines.filter(Boolean).map(String) : [];
+    if (lines.length) body = [body, ...lines].join('\n');
+    return { title, body };
   }
 }
