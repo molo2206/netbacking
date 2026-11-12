@@ -65,6 +65,7 @@ model User {
   user_settings        user_settings?
   trustedDevices       TrustedDevice[]
   loginOtpChallenges   LoginOtpChallenge[]
+  contactChangeRequests ContactChangeRequest[]
 
   @@index([phone], map: "idx_users_phone")
   @@index([role], map: "idx_users_role")
@@ -815,4 +816,25 @@ model LoginOtpChallenge {
   @@index([userId], map: "idx_login_otp_userId")
   @@index([createdAt], map: "idx_login_otp_createdAt")
   @@map("login_otp_challenges")
+}
+
+/// Changement d'e-mail / de téléphone : code OTP envoyé à la NOUVELLE adresse
+model ContactChangeRequest {
+  id         String    @id @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  type       String    @db.VarChar(10)
+  oldValue   String?   @db.VarChar(255)
+  newValue   String    @db.VarChar(255)
+  codeHash   String    @db.VarChar(64)
+  attempts   Int       @default(0)
+  sendCount  Int       @default(1)
+  lastSentAt DateTime  @default(now()) @db.DateTime(0)
+  expiresAt  DateTime  @db.DateTime(0)
+  consumedAt DateTime? @db.DateTime(0)
+  verifiedAt DateTime? @db.DateTime(0)
+  createdAt  DateTime  @default(now()) @db.DateTime(0)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "contact_change_requests_user_fk")
+
+  @@index([userId], map: "idx_contact_change_userId")
+  @@map("contact_change_requests")
 }

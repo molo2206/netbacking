@@ -34,7 +34,7 @@ import {
   validateNewPassword,
 } from '@app/common';
 import { writeAudit } from '../../../libs/common/src/audit/write-audit';
-import { maskPhone } from '../../../libs/common/src/utils/phone.util';
+import { checkSmsNumber, maskPhone } from '../../../libs/common/src/utils/phone.util';
 import { clientFromOrigin, getRequestContext, parseDevice } from '../../../libs/common/src/context/request-context';
 
 const registerLocks: Map<string, boolean> = new Map();
@@ -911,7 +911,7 @@ export class AuthServiceService {
   // ═════════════════════════════════════════════════════════════════════
   // OTP DE CONNEXION WEB (nouvel appareil / nouvelle adresse IP)
   // ═════════════════════════════════════════════════════════════════════
-  //  - Exigé sur les plateformes LOGIN_OTP_PLATFORMS (défaut : WEB, BACK_OFFICE)
+  //  - Exigé sur les plateformes LOGIN_OTP_PLATFORMS (défaut : WEB, BACK_OFFICE, MOBILE)
   //    quand l'appareil + l'adresse IP ne sont pas enregistrés comme fiables.
   //  - Code à 6 chiffres envoyé par SMS et/ou e-mail (LOGIN_OTP_CHANNELS).
   //  - Expiration (LOGIN_OTP_TTL_SECONDS), tentatives limitées (LOGIN_OTP_MAX_ATTEMPTS),
@@ -930,7 +930,7 @@ export class AuthServiceService {
       String(process.env[name] || def).toUpperCase().split(',').map((x) => x.trim()).filter(Boolean);
     return {
       enabled: String(process.env.LOGIN_OTP_ENABLED ?? 'true').toLowerCase() !== 'false',
-      platforms: list('LOGIN_OTP_PLATFORMS', 'WEB,BACK_OFFICE'),
+      platforms: list('LOGIN_OTP_PLATFORMS', 'WEB,BACK_OFFICE,MOBILE'),
       channels: list('LOGIN_OTP_CHANNELS', 'SMS,EMAIL'),
       ttlSeconds: num('LOGIN_OTP_TTL_SECONDS', 300),
       maxAttempts: num('LOGIN_OTP_MAX_ATTEMPTS', 5),
@@ -948,7 +948,8 @@ export class AuthServiceService {
    * mise à jour du navigateur ne soit pas vue comme un nouvel appareil).
    */
   private loginDeviceKey(loginDevice: any, dto: any): string {
-    const declared = String(dto?.deviceId || loginDevice?.deviceId || '').trim();
+    // Mobile : deviceId de l'app, sinon le token FCM (unique par installation)
+    const declared = String(dto?.deviceId || loginDevice?.deviceId || dto?.fcmToken || '').trim();
     const source = declared
       ? `id:${declared}`
       : `ua:${String(loginDevice?.userAgent || dto?.userAgent || dto?.deviceInfo || '').replace(/[\d._]+/g, '').toLowerCase()}|${loginDevice?.os?.replace(/[\d._]+/g, '') || ''}`;
@@ -1311,6 +1312,306 @@ export class AuthServiceService {
       },
     });
     return this.otpChallengeResponse(updated, delivery.sentTo, cfg, lang);
+  }
+
+  // ═════════════════════════════════════════════════════════════════════
+  // CHANGEMENT D'E-MAIL / DE TÉLÉPHONE AVEC VÉRIFICATION OTP
+  // ═════════════════════════════════════════════════════════════════════
+  //  1. requestContactChange : mot de passe actuel vérifié, nouvelle valeur
+  //     validée (format, unicité), code envoyé à la NOUVELLE adresse / au NOUVEAU numéro
+  //  2. verifyContactChange  : code correct → contact mis à jour + marqué vérifié,
+  //     l'ancienne adresse / l'ancien numéro reçoit une alerte de sécurité
+  //  3. resendContactChange  : renvoi du code (délai minimum, nombre d'envois limité)
+  //  Réglages : CONTACT_OTP_TTL_SECONDS (600), CONTACT_OTP_MAX_ATTEMPTS (5),
+  //  CONTACT_OTP_RESEND_SECONDS (60), CONTACT_OTP_MAX_SENDS (5), CONTACT_OTP_MAX_PER_HOUR (5)
+
+  private contactOtpConfig() {
+    const num = (name: string, def: number) => {
+      const n = parseInt(String(process.env[name] ?? ''), 10);
+      return Number.isFinite(n) && n > 0 ? n : def;
+    };
+    return {
+      ttlSeconds: num('CONTACT_OTP_TTL_SECONDS', 600),
+      maxAttempts: num('CONTACT_OTP_MAX_ATTEMPTS', 5),
+      resendSeconds: num('CONTACT_OTP_RESEND_SECONDS', 60),
+      maxSends: num('CONTACT_OTP_MAX_SENDS', 5),
+      maxPerHour: num('CONTACT_OTP_MAX_PER_HOUR', 5),
+    };
+  }
+
+  private contactError(key: string, lang: string, statusCode = 400, code?: string, params?: Record<string, any>) {
+    return new RpcException({
+      status: 'error',
+      ...(code ? { code } : {}),
+      message: this.i18nService.translate(key, lang, params),
+      statusCode,
+    });
+  }
+
+  /** Envoie le code à la nouvelle adresse e-mail ou au nouveau numéro. */
+  private async sendContactCode(type: 'EMAIL' | 'PHONE', to: string, code: string, user: any, ttlSeconds: number, lang: string): Promise<boolean> {
+    const minutes = Math.max(1, Math.round(ttlSeconds / 60));
+    if (type === 'PHONE') {
+      return this.smsService
+        .sendSms(to, this.i18nService.translate('contact_otp_sms', lang, { code, minutes }))
+        .catch(() => false);
+    }
+    return this.mailService
+      .sendBrandedEmail(to, this.i18nService.translate('contact_otp_email_subject', lang), {
+        lang,
+        title: this.i18nService.translate('contact_otp_email_title', lang),
+        greeting: this.i18nService.translate('login_otp_email_greeting', lang, { firstName: user.firstName || '' }),
+        paragraphs: [this.i18nService.translate('contact_otp_email_intro', lang)],
+        highlight: { label: this.i18nService.translate('login_otp_email_code_label', lang), value: code, monospace: true },
+        afterParagraphs: [
+          this.i18nService.translate('login_otp_email_validity', lang, { minutes }),
+          this.i18nService.translate('contact_otp_email_warning', lang),
+        ],
+        signature: "L'équipe AccesFinance",
+      })
+      .catch(() => false);
+  }
+
+  /** Étape 1 : demande de changement (mot de passe exigé), code envoyé au nouveau contact. */
+  async requestContactChange(data: { userId: string; type: string; value: string; password: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    const cfg = this.contactOtpConfig();
+    const type = String(data.type || '').trim().toUpperCase() === 'EMAIL' ? 'EMAIL'
+      : ['PHONE', 'TELEPHONE', 'TEL', 'MOBILE'].includes(String(data.type || '').trim().toUpperCase()) ? 'PHONE' : null;
+    if (!type) throw this.contactError('contact_type_invalid', lang);
+
+    const user = await this.prisma.user.findUnique({ where: { id: data.userId } });
+    if (!user || user.deletedAt) throw this.contactError('user_not_found', lang, 404);
+
+    // Identité confirmée par le mot de passe actuel
+    if (!data.password || !user.password || !(await bcrypt.compare(String(data.password), user.password))) {
+      await writeAudit(this.prisma, {
+        data: { userId: user.id, action: 'CONTACT_CHANGE_BAD_PASSWORD', entity: 'USER', entityId: user.id, message: JSON.stringify({ type }), level: 'WARN' },
+      }).catch(() => undefined);
+      throw this.contactError('contact_wrong_password', lang, 400, 'CONTACT_WRONG_PASSWORD');
+    }
+
+    // Nouvelle valeur : format + différente de l'actuelle + non utilisée par un autre compte
+    let newValue: string;
+    let sendTo: string;
+    if (type === 'EMAIL') {
+      newValue = String(data.value || '').trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(newValue) || newValue.length > 255) {
+        throw this.contactError('contact_email_invalid', lang);
+      }
+      if (newValue === String(user.email || '').toLowerCase()) throw this.contactError('contact_same_value', lang);
+      const taken = await this.prisma.user.findFirst({ where: { email: newValue, id: { not: user.id } }, select: { id: true } });
+      if (taken) throw this.contactError('email_already_exists', lang, 409, 'CONTACT_ALREADY_USED');
+      sendTo = newValue;
+    } else {
+      const check = checkSmsNumber(data.value);
+      if (!check.ok) throw this.contactError('contact_phone_invalid', lang, 400, undefined, { reason: check.reason || '' });
+      newValue = check.international; // +243XXXXXXXXX
+      if (phoneVariants(user.phone).includes(newValue)) throw this.contactError('contact_same_value', lang);
+      const taken = await this.prisma.user.findFirst({
+        where: { phone: { in: phoneVariants(newValue) }, id: { not: user.id } },
+        select: { id: true },
+      });
+      if (taken) throw this.contactError('phone_already_exists', lang, 409, 'CONTACT_ALREADY_USED');
+      sendTo = newValue;
+    }
+
+    // Limites anti-abus
+    const now = new Date();
+    const lastHour = await this.prisma.contactChangeRequest.count({
+      where: { userId: user.id, createdAt: { gt: new Date(now.getTime() - 3600 * 1000) } },
+    });
+    if (lastHour >= cfg.maxPerHour) throw this.contactError('contact_too_many_requests', lang, 429, 'CONTACT_TOO_MANY_REQUESTS');
+
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const id = crypto.randomUUID();
+    const sent = await this.sendContactCode(type, sendTo, code, user, cfg.ttlSeconds, lang);
+    if (!sent) throw this.contactError('contact_send_failed', lang, 503, 'CONTACT_SEND_FAILED');
+
+    // Une seule demande active par type
+    await this.prisma.contactChangeRequest.updateMany({
+      where: { userId: user.id, type, consumedAt: null },
+      data: { consumedAt: now },
+    });
+    const request = await this.prisma.contactChangeRequest.create({
+      data: {
+        id,
+        userId: user.id,
+        type,
+        oldValue: type === 'EMAIL' ? user.email : user.phone,
+        newValue,
+        codeHash: this.hashLoginOtp(id, code),
+        expiresAt: new Date(now.getTime() + cfg.ttlSeconds * 1000),
+        lastSentAt: now,
+      },
+    });
+
+    await writeAudit(this.prisma, {
+      data: {
+        userId: user.id, action: 'CONTACT_CHANGE_REQUESTED', entity: 'USER', entityId: user.id,
+        message: JSON.stringify({ type, newValue: type === 'EMAIL' ? this.maskEmail(newValue) : maskPhone(newValue) }),
+        level: 'INFO',
+      },
+    }).catch(() => undefined);
+
+    return {
+      success: true,
+      requiresOtp: true,
+      message: this.i18nService.translate(type === 'EMAIL' ? 'contact_otp_sent_email' : 'contact_otp_sent_phone', lang),
+      data: {
+        requestId: request.id,
+        type,
+        sentTo: type === 'EMAIL' ? this.maskEmail(newValue) : maskPhone(newValue),
+        expiresIn: cfg.ttlSeconds,
+        resendIn: cfg.resendSeconds,
+        attemptsLeft: cfg.maxAttempts,
+      },
+    };
+  }
+
+  private async openContactRequest(userId: string, requestId: string, lang: string) {
+    const request = requestId
+      ? await this.prisma.contactChangeRequest.findFirst({ where: { id: String(requestId), userId } })
+      : null;
+    if (!request || request.consumedAt) throw this.contactError('contact_request_invalid', lang, 400, 'CONTACT_REQUEST_INVALID');
+    if (request.expiresAt.getTime() < Date.now()) throw this.contactError('contact_otp_expired', lang, 400, 'CONTACT_OTP_EXPIRED');
+    return request;
+  }
+
+  /** Étape 2 : validation du code → e-mail / téléphone mis à jour et marqué vérifié. */
+  async verifyContactChange(data: { userId: string; requestId: string; otpCode: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    const cfg = this.contactOtpConfig();
+    const request = await this.openContactRequest(data.userId, data.requestId, lang);
+
+    const code = String(data.otpCode || '').replace(/\s/g, '');
+    const valid = /^\d{6}$/.test(code) && crypto.timingSafeEqual(
+      Buffer.from(this.hashLoginOtp(request.id, code)),
+      Buffer.from(request.codeHash),
+    );
+    if (!valid) {
+      const updated = await this.prisma.contactChangeRequest.update({ where: { id: request.id }, data: { attempts: { increment: 1 } } });
+      const left = Math.max(0, cfg.maxAttempts - updated.attempts);
+      if (left === 0) {
+        await this.prisma.contactChangeRequest.update({ where: { id: request.id }, data: { consumedAt: new Date() } });
+        throw this.contactError('contact_otp_too_many_attempts', lang, 429, 'CONTACT_OTP_TOO_MANY_ATTEMPTS');
+      }
+      throw this.contactError('login_otp_invalid', lang, 400, 'CONTACT_OTP_INVALID', { attemptsLeft: left });
+    }
+
+    // Usage unique
+    const consumed = await this.prisma.contactChangeRequest.updateMany({
+      where: { id: request.id, consumedAt: null },
+      data: { consumedAt: new Date(), verifiedAt: new Date() },
+    });
+    if (consumed.count === 0) throw this.contactError('contact_request_invalid', lang, 400, 'CONTACT_REQUEST_INVALID');
+
+    // Unicité revérifiée (un autre compte a pu prendre la valeur entre-temps)
+    const type = request.type as 'EMAIL' | 'PHONE';
+    const taken = await this.prisma.user.findFirst({
+      where: type === 'EMAIL'
+        ? { email: request.newValue, id: { not: data.userId } }
+        : { phone: { in: phoneVariants(request.newValue) }, id: { not: data.userId } },
+      select: { id: true },
+    });
+    if (taken) throw this.contactError(type === 'EMAIL' ? 'email_already_exists' : 'phone_already_exists', lang, 409, 'CONTACT_ALREADY_USED');
+
+    const before = await this.prisma.user.findUnique({ where: { id: data.userId } });
+    if (!before) throw this.contactError('user_not_found', lang, 404);
+    const updated = await this.prisma.user.update({
+      where: { id: data.userId },
+      data: type === 'EMAIL'
+        ? { email: request.newValue, isEmailVerified: true }
+        : { phone: request.newValue, isPhoneVerified: true },
+    });
+
+    // Le nouveau numéro sert aussi pour les codes de transfert : anciens codes annulés
+    await this.prisma.otp.updateMany({
+      where: { email: { in: [before.phone, before.email, ...phoneVariants(before.phone)].filter(Boolean) as string[] }, isUsed: false },
+      data: { isUsed: true },
+    }).catch(() => undefined);
+
+    await writeAudit(this.prisma, {
+      data: {
+        userId: updated.id,
+        action: type === 'EMAIL' ? 'EMAIL_CHANGED' : 'PHONE_CHANGED',
+        entity: 'USER',
+        entityId: updated.id,
+        oldValue: JSON.stringify({ [type === 'EMAIL' ? 'email' : 'phone']: request.oldValue }),
+        newValue: JSON.stringify({ [type === 'EMAIL' ? 'email' : 'phone']: request.newValue }),
+        message: JSON.stringify({ type, verifiedBy: 'OTP' }),
+        level: 'WARN',
+      },
+    }).catch(() => undefined);
+
+    // Alerte de sécurité envoyée à l'ANCIEN contact
+    const newMasked = type === 'EMAIL' ? this.maskEmail(request.newValue) : maskPhone(request.newValue);
+    try {
+      const alert = this.i18nService.translate(type === 'EMAIL' ? 'contact_changed_alert_email' : 'contact_changed_alert_phone', lang, { value: newMasked });
+      if (type === 'PHONE' && request.oldValue) await this.smsService.sendSms(request.oldValue, alert);
+      if (type === 'EMAIL' && request.oldValue && request.oldValue.includes('@')) {
+        await this.mailService.sendBrandedEmail(request.oldValue, this.i18nService.translate('contact_changed_alert_subject', lang), {
+          lang,
+          title: this.i18nService.translate('contact_changed_alert_subject', lang),
+          greeting: this.i18nService.translate('login_otp_email_greeting', lang, { firstName: updated.firstName || '' }),
+          paragraphs: [alert],
+          signature: "L'équipe AccesFinance",
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`[ContactChange] Alerte non envoyée : ${err?.message || err}`);
+    }
+
+    return {
+      success: true,
+      message: this.i18nService.translate(type === 'EMAIL' ? 'contact_email_updated' : 'contact_phone_updated', lang),
+      data: {
+        id: updated.id,
+        email: updated.email,
+        phone: updated.phone,
+        isEmailVerified: updated.isEmailVerified,
+        isPhoneVerified: updated.isPhoneVerified,
+      },
+    };
+  }
+
+  /** Renvoi du code de changement de contact. */
+  async resendContactChange(data: { userId: string; requestId: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    const cfg = this.contactOtpConfig();
+    const request = await this.openContactRequest(data.userId, data.requestId, lang);
+    const now = Date.now();
+    const wait = Math.ceil((request.lastSentAt.getTime() + cfg.resendSeconds * 1000 - now) / 1000);
+    if (wait > 0) throw this.contactError('login_otp_resend_too_soon', lang, 429, 'CONTACT_RESEND_TOO_SOON', { seconds: wait });
+    if (request.sendCount >= cfg.maxSends) throw this.contactError('login_otp_max_sends', lang, 429, 'CONTACT_MAX_SENDS');
+
+    const user = await this.prisma.user.findUnique({ where: { id: data.userId } });
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const sent = await this.sendContactCode(request.type as 'EMAIL' | 'PHONE', request.newValue, code, user, cfg.ttlSeconds, lang);
+    if (!sent) throw this.contactError('contact_send_failed', lang, 503, 'CONTACT_SEND_FAILED');
+
+    await this.prisma.contactChangeRequest.update({
+      where: { id: request.id },
+      data: {
+        codeHash: this.hashLoginOtp(request.id, code),
+        attempts: 0,
+        sendCount: { increment: 1 },
+        lastSentAt: new Date(now),
+        expiresAt: new Date(now + cfg.ttlSeconds * 1000),
+      },
+    });
+    return {
+      success: true,
+      message: this.i18nService.translate(request.type === 'EMAIL' ? 'contact_otp_sent_email' : 'contact_otp_sent_phone', lang),
+      data: {
+        requestId: request.id,
+        type: request.type,
+        sentTo: request.type === 'EMAIL' ? this.maskEmail(request.newValue) : maskPhone(request.newValue),
+        expiresIn: cfg.ttlSeconds,
+        resendIn: cfg.resendSeconds,
+        attemptsLeft: cfg.maxAttempts,
+      },
+    };
   }
 
   // ─────────────────────────── appareils de confiance ───────────────────────────

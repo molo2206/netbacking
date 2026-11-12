@@ -7,6 +7,7 @@
  *     audit_logs.userId, activity_logs.userId, transfers.initiatedBy
  *     → colonnes facultatives + clé étrangère ON DELETE SET NULL
  *  2. OTP de connexion Web : tables trusted_devices et login_otp_challenges
+ *  3. Changement d'e-mail / téléphone avec OTP : table contact_change_requests
  *
  * Équivalent manuel : prisma/sql/20261112_user_deletion_and_login_otp.sql
  * Désactivable : AUTO_DB_SCHEMA_UPDATES=false
@@ -124,6 +125,26 @@ export async function ensureLoginOtpTables(prisma: any, serviceName = 'service')
         KEY \`idx_login_otp_userId\` (\`userId\`),
         KEY \`idx_login_otp_createdAt\` (\`createdAt\`),
         CONSTRAINT \`login_otp_challenges_user_fk\` FOREIGN KEY (\`userId\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
+      ) ${tableOpts}`);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`contact_change_requests\` (
+        \`id\`          VARCHAR(36)  NOT NULL,
+        \`userId\`      VARCHAR(36)  NOT NULL,
+        \`type\`        VARCHAR(10)  NOT NULL,
+        \`oldValue\`    VARCHAR(255) NULL,
+        \`newValue\`    VARCHAR(255) NOT NULL,
+        \`codeHash\`    VARCHAR(64)  NOT NULL,
+        \`attempts\`    INT          NOT NULL DEFAULT 0,
+        \`sendCount\`   INT          NOT NULL DEFAULT 1,
+        \`lastSentAt\`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`expiresAt\`   DATETIME     NOT NULL,
+        \`consumedAt\`  DATETIME     NULL,
+        \`verifiedAt\`  DATETIME     NULL,
+        \`createdAt\`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        KEY \`idx_contact_change_userId\` (\`userId\`),
+        CONSTRAINT \`contact_change_requests_user_fk\` FOREIGN KEY (\`userId\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE
       ) ${tableOpts}`);
   } catch (err) {
     logger.error(

@@ -310,6 +310,67 @@ export class ApiGatewayController {
     );
   }
 
+  // ── Changement d'e-mail / de téléphone avec vérification OTP ──
+
+  /**
+   * Étape 1 : demander le changement.
+   * Body : { type: "email" | "phone", value: "nouvelle valeur", password: "mot de passe actuel" }
+   * → code à 6 chiffres envoyé à la NOUVELLE adresse / au NOUVEAU numéro ; renvoie requestId.
+   */
+  @Post('users/me/contact/request-change')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async requestContactChange(
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!body?.type || !body?.value || !body?.password) {
+      throw new HttpException('type, value et password sont obligatoires', HttpStatus.BAD_REQUEST);
+    }
+    return this.sendAuthMessage(
+      'auth.contact.request',
+      { userId: currentUser.id, type: body.type, value: body.value, password: body.password, lang: langHeader || 'fr' },
+      'Contact change request failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /** Étape 2 : valider le code. Body : { requestId, otpCode } → contact mis à jour et vérifié. */
+  @Post('users/me/contact/verify')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async verifyContactChange(
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!body?.requestId || !body?.otpCode) {
+      throw new HttpException('requestId et otpCode sont obligatoires', HttpStatus.BAD_REQUEST);
+    }
+    return this.sendAuthMessage(
+      'auth.contact.verify',
+      { userId: currentUser.id, requestId: body.requestId, otpCode: String(body.otpCode), lang: langHeader || 'fr' },
+      'Contact change verification failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /** Renvoyer le code. Body : { requestId } */
+  @Post('users/me/contact/resend')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async resendContactChange(
+    @CurrentUser() currentUser: any,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!body?.requestId) throw new HttpException('requestId est obligatoire', HttpStatus.BAD_REQUEST);
+    return this.sendAuthMessage(
+      'auth.contact.resend',
+      { userId: currentUser.id, requestId: body.requestId, lang: langHeader || 'fr' },
+      'Contact change resend failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
   // ── Appareils de confiance (« Se souvenir de moi ») ──
 
   @Get('users/me/trusted-devices')

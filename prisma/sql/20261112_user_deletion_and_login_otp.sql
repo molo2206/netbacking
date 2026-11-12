@@ -65,3 +65,23 @@ CREATE TABLE IF NOT EXISTS `login_otp_challenges` (
   KEY `idx_login_otp_createdAt` (`createdAt`),
   CONSTRAINT `login_otp_challenges_user_fk` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE CASCADE
 );
+
+-- 3. Changement d'e-mail / de téléphone avec vérification OTP
+CREATE TABLE IF NOT EXISTS `contact_change_requests` (
+  `id`          VARCHAR(36)  NOT NULL,
+  `userId`      VARCHAR(36)  NOT NULL,
+  `type`        VARCHAR(10)  NOT NULL,
+  `oldValue`    VARCHAR(255) NULL,
+  `newValue`    VARCHAR(255) NOT NULL,
+  `codeHash`    VARCHAR(64)  NOT NULL,
+  `attempts`    INT          NOT NULL DEFAULT 0,
+  `sendCount`   INT          NOT NULL DEFAULT 1,
+  `lastSentAt`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expiresAt`   DATETIME     NOT NULL,
+  `consumedAt`  DATETIME     NULL,
+  `verifiedAt`  DATETIME     NULL,
+  `createdAt`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_contact_change_userId` (`userId`),
+  CONSTRAINT `contact_change_requests_user_fk` FOREIGN KEY (`userId`) REFERENCES `users` (`id`) ON DELETE CASCADE
+);

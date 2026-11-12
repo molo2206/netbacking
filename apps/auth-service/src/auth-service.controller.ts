@@ -95,6 +95,22 @@ export class AuthServiceController {
     }
   }
 
+  // ✅ Changement d'e-mail / téléphone avec OTP
+  @MessagePattern('auth.contact.request')
+  async contactRequest(@Payload() data: any) {
+    return this.authService.requestContactChange(data);
+  }
+
+  @MessagePattern('auth.contact.verify')
+  async contactVerify(@Payload() data: any) {
+    return this.authService.verifyContactChange(data);
+  }
+
+  @MessagePattern('auth.contact.resend')
+  async contactResend(@Payload() data: any) {
+    return this.authService.resendContactChange(data);
+  }
+
   @MessagePattern('auth.trustedDevices.list')
   async trustedDevicesList(@Payload() data: { userId: string }) {
     return this.authService.listTrustedDevices(data.userId);
