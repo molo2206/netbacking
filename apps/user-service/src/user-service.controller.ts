@@ -376,17 +376,13 @@ export class UserServiceController {
   }
 
   @MessagePattern('delete_user')
-  async deleteUser(@Payload() data: { id: string; lang?: string }) {
+  async deleteUser(@Payload() data: { id: string; lang?: string; requesterId?: string; reason?: string }) {
     const lang = data.lang || 'fr';
-    console.log('🔍 Langue reçue par delete_user :', lang);
     try {
-      return await this.userService.deleteUser(data.id, lang);
+      // ✅ Suppression DÉFINITIVE (historique conservé) — voir UserServiceService.deleteUser
+      return await this.userService.deleteUser(data.id, lang, data.requesterId, data.reason);
     } catch (error) {
-      throw new RpcException({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Unknown error',
-        statusCode: 400,
-      });
+      throw this.toRpcError(error);
     }
   }
 

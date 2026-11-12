@@ -34,6 +34,7 @@ import {
   validateNewPassword,
 } from '@app/common';
 import { writeAudit } from '../../../libs/common/src/audit/write-audit';
+import { maskPhone } from '../../../libs/common/src/utils/phone.util';
 import { clientFromOrigin, getRequestContext, parseDevice } from '../../../libs/common/src/context/request-context';
 
 const registerLocks: Map<string, boolean> = new Map();
@@ -888,200 +889,11 @@ export class AuthServiceService {
         });
       }
 
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: {
-          failedLoginAttempts: 0,
-          lockedUntil: null,
-          status: users_status.ACTIVE,
-          lastLoginAt: new Date(),
-          lastLoginIp: ipAddress || undefined,
-        },
-      });
+      // ✅ OTP obligatoire sur le Web : appareil ou adresse IP non reconnus
+      const otpChallenge = await this.loginOtpGate({ user, dto, ipAddress, loginDevice, loginPlatform, lang });
+      if (otpChallenge) return otpChallenge;
 
-      const loginEntry = await this.prisma.loginHistory.create({
-        data: {
-          userId: user.id,
-          ipAddress: ipAddress || loginDevice.ipAddress || 'unknown',
-          userAgent: loginDevice.userAgent || dto.deviceInfo || 'unknown',
-          success: true,
-          deviceId: loginDevice.deviceId || dto.fcmToken || undefined,
-          deviceType: loginDevice.deviceType || undefined,
-          deviceName: loginDevice.deviceName || undefined,
-          os: loginDevice.os || undefined,
-          browser: loginDevice.browser || undefined,
-        },
-      });
-      await this.recordPlatform('login_history', loginEntry.id, loginPlatform);
-
-      const userRole = user.role || UserRole.USER;
-      const tokens = this.generateJwtTokens(
-        user.id,
-        user.email || null,
-        userRole,
-        undefined,
-        { mustChangePassword },
-      );
-
-      // ✅ Plusieurs appareils :
-      //   - ADMIN / SUPER_ADMIN : chaque connexion ouvre une NOUVELLE session, les autres
-      //     restent actives (téléphone, ordinateur du bureau, portable…).
-      //   - Client : une session par appareil ; se reconnecter sur le MÊME appareil
-      //     remplace l'ancienne session de cet appareil uniquement.
-      const isAdminLogin = userRole === UserRole.ADMIN || userRole === UserRole.SUPER_ADMIN;
-      const declaredDevice = loginDevice.deviceId || dto.fcmToken;
-      let deviceId: string;
-      if (declaredDevice) {
-        deviceId = String(declaredDevice);
-      } else if (isAdminLogin) {
-        deviceId = `admin-${crypto.randomUUID()}`;
-      } else {
-        // Empreinte de l'appareil : inclut le user-agent pour ne pas confondre deux
-        // navigateurs / téléphones derrière la même adresse IP
-        const fingerprint = `${dto.deviceInfo || ''}|${dto.userAgent || ''}|${loginPlatform}|${ipAddress || ''}`;
-        deviceId = crypto.createHash('sha256').update(fingerprint).digest('hex');
-      }
-
-      if (!isAdminLogin) {
-        await this.prisma.session.updateMany({
-          where: {
-            userId: user.id,
-            isActive: true,
-            deviceId: deviceId,
-          },
-          data: { isActive: false, logoutAt: new Date() },
-        });
-      }
-
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 30);
-
-      const createdSession = await this.prisma.session.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId: user.id,
-          token: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          deviceId: deviceId,
-          deviceName: loginDevice.deviceName || null,
-          deviceType: loginDevice.deviceType || null,
-          os: loginDevice.os || null,
-          browser: loginDevice.browser || null,
-          appVersion: loginDevice.appVersion || null,
-          userAgent: loginDevice.userAgent || dto.deviceInfo || null,
-          ipAddress: ipAddress || loginDevice.ipAddress || null,
-          expiresAt: expiresAt,
-          isActive: true,
-          createdAt: new Date(),
-        },
-      });
-      await this.recordPlatform('sessions', createdSession.id, loginPlatform);
-
-      if (dto.fcmToken && dto.fcmToken.trim()) {
-        try {
-          // ✅ Le token FCM est aussi rangé dans pushToken (lu par le service de notification)
-          await this.prisma.device.upsert({
-            where: { deviceId: dto.fcmToken },
-            update: {
-              userId: user.id,
-              deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
-              deviceType: loginPlatform,
-              pushToken: dto.fcmToken,
-              isActive: true,
-              lastUsedAt: new Date(),
-              updatedAt: new Date(),
-            },
-            create: {
-              id: crypto.randomUUID(),
-              userId: user.id,
-              deviceId: dto.fcmToken,
-              deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
-              deviceType: loginPlatform,
-              pushToken: dto.fcmToken,
-              isActive: true,
-              lastUsedAt: new Date(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          });
-        } catch (err) {
-          console.error('Erreur FCM token:', err);
-        }
-      }
-
-      // ═══════════════════════════════════════════════════════════════
-      // ✅ COMPTES DEPUIS L'API BANCAIRE (jamais depuis Prisma)
-      //    Tant que le mot de passe temporaire n'est pas changé, on ne
-      //    renvoie aucun compte : l'app doit d'abord forcer le changement.
-      // ═══════════════════════════════════════════════════════════════
-      const accounts = mustChangePassword
-        ? []
-        : await this.fetchClientAccounts(user.clientId, lang, 'Login');
-
-      const userSettings = await this.prisma.user_settings.findUnique({
-        where: { user_id: user.id },
-        select: {
-          language: true,
-          theme: true,
-          email_notifications: true,
-          sms_notifications: true,
-          push_notifications: true,
-          two_factor_enabled: true,
-        },
-      });
-
-      const sessions = await this.prisma.session.findMany({
-        where: {
-          userId: user.id,
-          isActive: true,
-          expiresAt: { gt: new Date() },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      const platformsById = await this.sessionPlatforms(sessions.map((x) => x.id));
-      const formattedSessions = sessions.map((session) => this.formatSession(session, platformsById));
-
-      return {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        message: mustChangePassword
-          ? this.i18nService.translate('password_change_required', lang)
-          : this.i18nService.translate('login_success', lang),
-        mustChangePassword,
-        sessionId: createdSession.id,
-        data: {
-          id: user.id,
-          email: user.email || null,
-          phone: user.phone,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-          status: user.status,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-          clientId: user.clientId,
-          sessions: formattedSessions,
-          platform: user.platform || null,
-          isEmailVerified: user.isEmailVerified,
-          isPhoneVerified: user.isPhoneVerified,
-          isTwoFactorEnabled: user.isTwoFactorEnabled,
-          twoFactorSecret: user.twoFactorSecret,
-          lastLoginAt: user.lastLoginAt,
-          pinStatus: user.pinStatus,
-          mustChangePassword,
-          tempPasswordExpiresAt: mustChangePassword ? user.tempPasswordExpiresAt : null,
-          accounts,   // ✅ depuis BankService (déjà nettoyé)
-          settings: {
-            language: userSettings?.language || user.preferredLanguage || 'fr',
-            theme: userSettings?.theme || 'system',
-            email_notifications: userSettings?.email_notifications ?? true,
-            sms_notifications: userSettings?.sms_notifications ?? true,
-            push_notifications: userSettings?.push_notifications ?? true,
-            two_factor_enabled: userSettings?.two_factor_enabled ?? false,
-          }
-        },
-      };
+      return await this.finishLogin({ user, dto, ipAddress, loginDevice, loginPlatform, mustChangePassword, lang });
     } catch (error) {
       if (
         error instanceof RpcException ||
@@ -1096,6 +908,643 @@ export class AuthServiceService {
       });
     }
   }
+  // ═════════════════════════════════════════════════════════════════════
+  // OTP DE CONNEXION WEB (nouvel appareil / nouvelle adresse IP)
+  // ═════════════════════════════════════════════════════════════════════
+  //  - Exigé sur les plateformes LOGIN_OTP_PLATFORMS (défaut : WEB, BACK_OFFICE)
+  //    quand l'appareil + l'adresse IP ne sont pas enregistrés comme fiables.
+  //  - Code à 6 chiffres envoyé par SMS et/ou e-mail (LOGIN_OTP_CHANNELS).
+  //  - Expiration (LOGIN_OTP_TTL_SECONDS), tentatives limitées (LOGIN_OTP_MAX_ATTEMPTS),
+  //    renvoi limité (LOGIN_OTP_RESEND_SECONDS / LOGIN_OTP_MAX_SENDS),
+  //    demandes limitées par heure (LOGIN_OTP_MAX_CHALLENGES_PER_HOUR).
+  //  - « Se souvenir de moi » (rememberMe) : appareil + IP enregistrés comme fiables
+  //    pendant TRUSTED_DEVICE_DAYS jours → plus d'OTP depuis cet appareil et cette IP.
+  //  - Sécurité : OTP toujours exigé après 3 mots de passe erronés consécutifs.
+
+  private loginOtpConfig() {
+    const num = (name: string, def: number) => {
+      const n = parseInt(String(process.env[name] ?? ''), 10);
+      return Number.isFinite(n) && n > 0 ? n : def;
+    };
+    const list = (name: string, def: string) =>
+      String(process.env[name] || def).toUpperCase().split(',').map((x) => x.trim()).filter(Boolean);
+    return {
+      enabled: String(process.env.LOGIN_OTP_ENABLED ?? 'true').toLowerCase() !== 'false',
+      platforms: list('LOGIN_OTP_PLATFORMS', 'WEB,BACK_OFFICE'),
+      channels: list('LOGIN_OTP_CHANNELS', 'SMS,EMAIL'),
+      ttlSeconds: num('LOGIN_OTP_TTL_SECONDS', 300),
+      maxAttempts: num('LOGIN_OTP_MAX_ATTEMPTS', 5),
+      resendSeconds: num('LOGIN_OTP_RESEND_SECONDS', 60),
+      maxSends: num('LOGIN_OTP_MAX_SENDS', 5),
+      maxChallengesPerHour: num('LOGIN_OTP_MAX_CHALLENGES_PER_HOUR', 10),
+      trustedDays: num('TRUSTED_DEVICE_DAYS', 30),
+      forceAfterFailedPasswords: num('LOGIN_OTP_FORCE_AFTER_FAILED', 3),
+    };
+  }
+
+  /**
+   * Identifiant stable de l'appareil : x-device-id / deviceId envoyé par le front,
+   * sinon empreinte du navigateur (user-agent sans numéros de version, pour qu'une
+   * mise à jour du navigateur ne soit pas vue comme un nouvel appareil).
+   */
+  private loginDeviceKey(loginDevice: any, dto: any): string {
+    const declared = String(dto?.deviceId || loginDevice?.deviceId || '').trim();
+    const source = declared
+      ? `id:${declared}`
+      : `ua:${String(loginDevice?.userAgent || dto?.userAgent || dto?.deviceInfo || '').replace(/[\d._]+/g, '').toLowerCase()}|${loginDevice?.os?.replace(/[\d._]+/g, '') || ''}`;
+    return crypto.createHash('sha256').update(source).digest('hex');
+  }
+
+  private hashLoginOtp(challengeId: string, code: string): string {
+    const secret = process.env.JWT_SECRET || 'secret';
+    return crypto.createHash('sha256').update(`${challengeId}:${code}:${secret}`).digest('hex');
+  }
+
+  private maskEmail(email?: string | null): string | null {
+    if (!email || !email.includes('@')) return null;
+    const [name, domain] = email.split('@');
+    return `${name.slice(0, 1)}${'*'.repeat(Math.max(1, Math.min(6, name.length - 1)))}@${domain}`;
+  }
+
+  /** Envoie le code par SMS et/ou e-mail ; renvoie les canaux réellement utilisés. */
+  private async deliverLoginOtp(user: any, code: string, ctx: { ipAddress?: string | null; deviceLabel?: string | null; ttlSeconds: number; channels: string[]; lang: string }) {
+    const minutes = Math.max(1, Math.round(ctx.ttlSeconds / 60));
+    const used: string[] = [];
+    const sentTo: Record<string, string | null> = {};
+
+    if (ctx.channels.includes('SMS') && user.phone) {
+      const text = this.i18nService.translate('login_otp_sms', ctx.lang, { code, minutes });
+      const ok = await this.smsService.sendSms(user.phone, text).catch(() => false);
+      if (ok) {
+        used.push('SMS');
+        sentTo.sms = maskPhone(user.phone);
+      }
+    }
+    if (ctx.channels.includes('EMAIL') && user.email) {
+      const ok = await this.mailService
+        .sendBrandedEmail(user.email, this.i18nService.translate('login_otp_email_subject', ctx.lang), {
+          lang: ctx.lang,
+          title: this.i18nService.translate('login_otp_email_title', ctx.lang),
+          greeting: this.i18nService.translate('login_otp_email_greeting', ctx.lang, { firstName: user.firstName || '' }),
+          paragraphs: [this.i18nService.translate('login_otp_email_intro', ctx.lang)],
+          highlight: { label: this.i18nService.translate('login_otp_email_code_label', ctx.lang), value: code, monospace: true },
+          details: [
+            { label: this.i18nService.translate('login_otp_email_device', ctx.lang), value: ctx.deviceLabel || '-' },
+            { label: this.i18nService.translate('login_otp_email_ip', ctx.lang), value: ctx.ipAddress || '-' },
+            {
+              label: this.i18nService.translate('login_otp_email_date', ctx.lang),
+              value: new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Lubumbashi' }),
+            },
+          ],
+          afterParagraphs: [
+            this.i18nService.translate('login_otp_email_validity', ctx.lang, { minutes }),
+            this.i18nService.translate('login_otp_email_warning', ctx.lang),
+          ],
+          signature: "L'équipe AccesFinance",
+        })
+        .catch(() => false);
+      if (ok) {
+        used.push('EMAIL');
+        sentTo.email = this.maskEmail(user.email);
+      }
+    }
+    return { used, sentTo };
+  }
+
+  private otpChallengeResponse(challenge: any, sentTo: Record<string, string | null>, cfg: any, lang: string) {
+    const now = Date.now();
+    return {
+      success: true,
+      requiresOtp: true,
+      code: 'LOGIN_OTP_REQUIRED',
+      message: this.i18nService.translate('login_otp_required', lang),
+      challengeId: challenge.id,
+      reason: challenge.reason,
+      channels: String(challenge.channels || '').split(',').filter(Boolean),
+      sentTo,
+      expiresIn: Math.max(0, Math.round((new Date(challenge.expiresAt).getTime() - now) / 1000)),
+      resendIn: Math.max(0, Math.round((new Date(challenge.lastSentAt).getTime() + cfg.resendSeconds * 1000 - now) / 1000)),
+      attemptsLeft: Math.max(0, cfg.maxAttempts - (challenge.attempts || 0)),
+    };
+  }
+
+  /**
+   * Après un mot de passe correct : renvoie la demande d'OTP si l'appareil / l'IP
+   * ne sont pas de confiance, sinon null (la connexion continue normalement).
+   */
+  private async loginOtpGate(params: { user: any; dto: any; ipAddress?: string; loginDevice: any; loginPlatform: string; lang: string }) {
+    const { user, dto, loginDevice, loginPlatform, lang } = params;
+    const cfg = this.loginOtpConfig();
+    if (!cfg.enabled || !cfg.platforms.includes(String(loginPlatform).toUpperCase())) return null;
+
+    const ip = params.ipAddress || loginDevice?.ipAddress || 'unknown';
+    const deviceKey = this.loginDeviceKey(loginDevice, dto);
+    const now = new Date();
+    const forced = (user.failedLoginAttempts || 0) >= cfg.forceAfterFailedPasswords;
+
+    try {
+      if (!forced) {
+        const trusted = await this.prisma.trustedDevice.findFirst({
+          where: { userId: user.id, deviceKey, ipAddress: ip, revokedAt: null, expiresAt: { gt: now } },
+        });
+        if (trusted) {
+          await this.prisma.trustedDevice.update({ where: { id: trusted.id }, data: { lastUsedAt: now } }).catch(() => undefined);
+          return null; // appareil + IP reconnus : pas d'OTP
+        }
+      }
+
+      const knownDevice = await this.prisma.trustedDevice.count({
+        where: { userId: user.id, deviceKey, revokedAt: null, expiresAt: { gt: now } },
+      });
+      const reason = forced ? 'SECURITY' : knownDevice > 0 ? 'NEW_IP' : 'NEW_DEVICE';
+
+      // Anti-spam : un code encore valide pour cet appareil, envoyé il y a peu → on le réutilise
+      const pending = await this.prisma.loginOtpChallenge.findFirst({
+        where: { userId: user.id, deviceKey, consumedAt: null, expiresAt: { gt: now } },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (pending && pending.lastSentAt.getTime() + cfg.resendSeconds * 1000 > now.getTime() && pending.attempts < cfg.maxAttempts) {
+        if (dto?.rememberMe && !pending.rememberMe) {
+          await this.prisma.loginOtpChallenge.update({ where: { id: pending.id }, data: { rememberMe: true } }).catch(() => undefined);
+        }
+        return this.otpChallengeResponse(pending, { sms: maskPhone(user.phone), email: this.maskEmail(user.email) }, cfg, lang);
+      }
+
+      const lastHour = await this.prisma.loginOtpChallenge.count({
+        where: { userId: user.id, createdAt: { gt: new Date(now.getTime() - 3600 * 1000) } },
+      });
+      if (lastHour >= cfg.maxChallengesPerHour) {
+        throw new RpcException({
+          status: 'error',
+          code: 'LOGIN_OTP_TOO_MANY_REQUESTS',
+          message: this.i18nService.translate('login_otp_too_many_requests', lang),
+          statusCode: 429,
+        });
+      }
+
+      const challengeId = crypto.randomUUID();
+      const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+      const delivery = await this.deliverLoginOtp(user, code, {
+        ipAddress: ip,
+        deviceLabel: [loginDevice?.deviceName, loginDevice?.os, loginDevice?.browser].filter(Boolean).join(' · '),
+        ttlSeconds: cfg.ttlSeconds,
+        channels: cfg.channels,
+        lang,
+      });
+      if (!delivery.used.length) {
+        throw new RpcException({
+          status: 'error',
+          code: 'LOGIN_OTP_SEND_FAILED',
+          message: this.i18nService.translate('login_otp_send_failed', lang),
+          statusCode: 503,
+        });
+      }
+
+      // Un seul code actif par appareil
+      await this.prisma.loginOtpChallenge.updateMany({
+        where: { userId: user.id, deviceKey, consumedAt: null },
+        data: { consumedAt: now },
+      });
+      const challenge = await this.prisma.loginOtpChallenge.create({
+        data: {
+          id: challengeId,
+          userId: user.id,
+          codeHash: this.hashLoginOtp(challengeId, code),
+          reason,
+          channels: delivery.used.join(','),
+          deviceKey,
+          ipAddress: ip,
+          userAgent: loginDevice?.userAgent || dto?.userAgent || null,
+          platform: loginPlatform,
+          rememberMe: dto?.rememberMe === true || String(dto?.rememberMe) === 'true',
+          expiresAt: new Date(now.getTime() + cfg.ttlSeconds * 1000),
+          lastSentAt: now,
+        },
+      });
+
+      await writeAudit(this.prisma, {
+        data: {
+          userId: user.id,
+          action: 'LOGIN_OTP_REQUIRED',
+          entity: 'AUTH',
+          entityId: challengeId,
+          message: JSON.stringify({ reason, channels: delivery.used, platform: loginPlatform, ip }),
+          level: 'INFO',
+        },
+      }).catch(() => undefined);
+
+      return this.otpChallengeResponse(challenge, delivery.sentTo, cfg, lang);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      // Tables absentes / base indisponible : on ne laisse PAS passer sans OTP
+      this.logger.error(`[LoginOtp] Vérification impossible : ${error?.message || error}`);
+      throw new RpcException({
+        status: 'error',
+        code: 'LOGIN_OTP_UNAVAILABLE',
+        message: this.i18nService.translate('login_otp_unavailable', lang),
+        statusCode: 503,
+      });
+    }
+  }
+
+  private async findOpenChallenge(challengeId: string, lang: string) {
+    const challenge = challengeId
+      ? await this.prisma.loginOtpChallenge.findUnique({ where: { id: String(challengeId) } })
+      : null;
+    if (!challenge || challenge.consumedAt) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_INVALID_CHALLENGE', message: this.i18nService.translate('login_otp_invalid_challenge', lang), statusCode: 400 });
+    }
+    if (challenge.expiresAt.getTime() < Date.now()) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_EXPIRED', message: this.i18nService.translate('login_otp_expired', lang), statusCode: 400 });
+    }
+    return challenge;
+  }
+
+  /** Validation du code : ouvre la session et, avec « Se souvenir de moi », enregistre l'appareil + l'IP. */
+  async verifyLoginOtp(data: {
+    challengeId: string;
+    otpCode: string;
+    rememberMe?: boolean | string;
+    lang?: string;
+    ipAddress?: string;
+    userAgent?: string;
+    platform?: string;
+    deviceInfo?: string;
+    deviceId?: string;
+    fcmToken?: string;
+  }) {
+    const lang = data.lang || 'fr';
+    const cfg = this.loginOtpConfig();
+    const challenge = await this.findOpenChallenge(data.challengeId, lang);
+
+    if (challenge.attempts >= cfg.maxAttempts) {
+      await this.prisma.loginOtpChallenge.update({ where: { id: challenge.id }, data: { consumedAt: new Date() } });
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_TOO_MANY_ATTEMPTS', message: this.i18nService.translate('login_otp_too_many_attempts', lang), statusCode: 429 });
+    }
+
+    const ctx = getRequestContext();
+    const loginDevice = this.currentDevice({ userAgent: data.userAgent, deviceInfo: data.deviceInfo, deviceId: data.deviceId });
+    // Le code doit être saisi depuis le même appareil que la demande
+    if (this.loginDeviceKey(loginDevice, data) !== challenge.deviceKey) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_DEVICE_MISMATCH', message: this.i18nService.translate('login_otp_device_mismatch', lang), statusCode: 400 });
+    }
+
+    const code = String(data.otpCode || '').replace(/\s/g, '');
+    const valid = /^\d{6}$/.test(code) && crypto.timingSafeEqual(
+      Buffer.from(this.hashLoginOtp(challenge.id, code)),
+      Buffer.from(challenge.codeHash),
+    );
+    if (!valid) {
+      const updated = await this.prisma.loginOtpChallenge.update({
+        where: { id: challenge.id },
+        data: { attempts: { increment: 1 } },
+      });
+      const left = Math.max(0, cfg.maxAttempts - updated.attempts);
+      await writeAudit(this.prisma, {
+        data: { userId: challenge.userId, action: 'LOGIN_OTP_FAILED', entity: 'AUTH', entityId: challenge.id, message: JSON.stringify({ attemptsLeft: left }), level: 'WARN' },
+      }).catch(() => undefined);
+      if (left === 0) {
+        await this.prisma.loginOtpChallenge.update({ where: { id: challenge.id }, data: { consumedAt: new Date() } });
+        throw new RpcException({ status: 'error', code: 'LOGIN_OTP_TOO_MANY_ATTEMPTS', message: this.i18nService.translate('login_otp_too_many_attempts', lang), statusCode: 429 });
+      }
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_INVALID', message: this.i18nService.translate('login_otp_invalid', lang, { attemptsLeft: left }), statusCode: 400, attemptsLeft: left });
+    }
+
+    // Code correct : usage unique
+    const consumed = await this.prisma.loginOtpChallenge.updateMany({
+      where: { id: challenge.id, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+    if (consumed.count === 0) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_INVALID_CHALLENGE', message: this.i18nService.translate('login_otp_invalid_challenge', lang), statusCode: 400 });
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: challenge.userId } });
+    if (!user || user.deletedAt || user.status !== users_status.ACTIVE) {
+      throw new RpcException({ status: 'error', message: this.i18nService.translate('account_inactive', lang), statusCode: 403 });
+    }
+
+    const ipAddress = data.ipAddress || ctx.ipAddress || challenge.ipAddress || undefined;
+    const rememberMe = challenge.rememberMe || data.rememberMe === true || String(data.rememberMe) === 'true';
+    if (rememberMe) {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + cfg.trustedDays * 24 * 3600 * 1000);
+      await this.prisma.trustedDevice.upsert({
+        where: { userId_deviceKey_ipAddress: { userId: user.id, deviceKey: challenge.deviceKey, ipAddress: ipAddress || 'unknown' } },
+        update: { expiresAt, lastUsedAt: now, revokedAt: null, deviceName: [loginDevice.deviceName, loginDevice.os, loginDevice.browser].filter(Boolean).join(' · ') || null },
+        create: {
+          id: crypto.randomUUID(),
+          userId: user.id,
+          deviceKey: challenge.deviceKey,
+          ipAddress: ipAddress || 'unknown',
+          deviceName: [loginDevice.deviceName, loginDevice.os, loginDevice.browser].filter(Boolean).join(' · ') || null,
+          userAgent: loginDevice.userAgent || null,
+          platform: challenge.platform,
+          lastUsedAt: now,
+          expiresAt,
+        },
+      });
+    }
+
+    await writeAudit(this.prisma, {
+      data: {
+        userId: user.id,
+        action: 'LOGIN_OTP_VERIFIED',
+        entity: 'AUTH',
+        entityId: challenge.id,
+        message: JSON.stringify({ reason: challenge.reason, rememberMe, trustedDays: rememberMe ? cfg.trustedDays : 0 }),
+        level: 'INFO',
+      },
+    }).catch(() => undefined);
+
+    const mustChangePassword = user.mustChangePassword === true;
+    const result = await this.finishLogin({
+      user,
+      dto: { ...data, platform: challenge.platform },
+      ipAddress,
+      loginDevice,
+      loginPlatform: challenge.platform || 'WEB',
+      mustChangePassword,
+      lang,
+    });
+    return { ...result, deviceTrusted: rememberMe, trustedUntil: rememberMe ? new Date(Date.now() + cfg.trustedDays * 24 * 3600 * 1000) : null };
+  }
+
+  /** Renvoi du code (délai minimum entre deux envois, nombre d'envois limité). */
+  async resendLoginOtp(data: { challengeId: string; lang?: string }) {
+    const lang = data.lang || 'fr';
+    const cfg = this.loginOtpConfig();
+    const challenge = await this.findOpenChallenge(data.challengeId, lang);
+    const now = Date.now();
+
+    const wait = Math.ceil((challenge.lastSentAt.getTime() + cfg.resendSeconds * 1000 - now) / 1000);
+    if (wait > 0) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_RESEND_TOO_SOON', message: this.i18nService.translate('login_otp_resend_too_soon', lang, { seconds: wait }), statusCode: 429, resendIn: wait });
+    }
+    if (challenge.sendCount >= cfg.maxSends) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_MAX_SENDS', message: this.i18nService.translate('login_otp_max_sends', lang), statusCode: 429 });
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: challenge.userId } });
+    if (!user) throw new RpcException({ status: 'error', message: this.i18nService.translate('user_not_found', lang), statusCode: 404 });
+
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const delivery = await this.deliverLoginOtp(user, code, {
+      ipAddress: challenge.ipAddress,
+      deviceLabel: null,
+      ttlSeconds: cfg.ttlSeconds,
+      channels: cfg.channels,
+      lang,
+    });
+    if (!delivery.used.length) {
+      throw new RpcException({ status: 'error', code: 'LOGIN_OTP_SEND_FAILED', message: this.i18nService.translate('login_otp_send_failed', lang), statusCode: 503 });
+    }
+    const updated = await this.prisma.loginOtpChallenge.update({
+      where: { id: challenge.id },
+      data: {
+        codeHash: this.hashLoginOtp(challenge.id, code),
+        attempts: 0,
+        sendCount: { increment: 1 },
+        lastSentAt: new Date(now),
+        expiresAt: new Date(now + cfg.ttlSeconds * 1000),
+        channels: delivery.used.join(','),
+      },
+    });
+    return this.otpChallengeResponse(updated, delivery.sentTo, cfg, lang);
+  }
+
+  // ─────────────────────────── appareils de confiance ───────────────────────────
+
+  async listTrustedDevices(userId: string) {
+    const rows = await this.prisma.trustedDevice.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { lastUsedAt: 'desc' },
+      select: { id: true, deviceName: true, ipAddress: true, platform: true, createdAt: true, lastUsedAt: true, expiresAt: true },
+    });
+    return { message: 'Appareils de confiance', data: rows };
+  }
+
+  async revokeTrustedDevices(userId: string, id?: string) {
+    const result = await this.prisma.trustedDevice.updateMany({
+      where: { userId, revokedAt: null, ...(id ? { id } : {}) },
+      data: { revokedAt: new Date() },
+    });
+    await writeAudit(this.prisma, {
+      data: { userId, action: 'TRUSTED_DEVICES_REVOKED', entity: 'AUTH', entityId: id || userId, message: JSON.stringify({ count: result.count }), level: 'INFO' },
+    }).catch(() => undefined);
+    return { message: 'Appareil(s) retiré(s) de la liste de confiance', count: result.count };
+  }
+
+  /**
+   * Fin de la connexion (mot de passe déjà vérifié, OTP validé si demandé) :
+   * compteurs remis à zéro, historique, jetons, session, token push, comptes bancaires.
+   */
+  private async finishLogin(params: {
+    user: any;
+    dto: any;
+    ipAddress?: string;
+    loginDevice: any;
+    loginPlatform: string;
+    mustChangePassword: boolean;
+    lang: string;
+  }) {
+    const { user, dto, ipAddress, loginDevice, loginPlatform, mustChangePassword, lang } = params;
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        status: users_status.ACTIVE,
+        lastLoginAt: new Date(),
+        lastLoginIp: ipAddress || undefined,
+      },
+    });
+
+    const loginEntry = await this.prisma.loginHistory.create({
+      data: {
+        userId: user.id,
+        ipAddress: ipAddress || loginDevice.ipAddress || 'unknown',
+        userAgent: loginDevice.userAgent || dto.deviceInfo || 'unknown',
+        success: true,
+        deviceId: loginDevice.deviceId || dto.fcmToken || undefined,
+        deviceType: loginDevice.deviceType || undefined,
+        deviceName: loginDevice.deviceName || undefined,
+        os: loginDevice.os || undefined,
+        browser: loginDevice.browser || undefined,
+      },
+    });
+    await this.recordPlatform('login_history', loginEntry.id, loginPlatform);
+
+    const userRole = user.role || UserRole.USER;
+    const tokens = this.generateJwtTokens(
+      user.id,
+      user.email || null,
+      userRole,
+      undefined,
+      { mustChangePassword },
+    );
+
+    // ✅ Plusieurs appareils :
+    //   - ADMIN / SUPER_ADMIN : chaque connexion ouvre une NOUVELLE session, les autres
+    //     restent actives (téléphone, ordinateur du bureau, portable…).
+    //   - Client : une session par appareil ; se reconnecter sur le MÊME appareil
+    //     remplace l'ancienne session de cet appareil uniquement.
+    const isAdminLogin = userRole === UserRole.ADMIN || userRole === UserRole.SUPER_ADMIN;
+    const declaredDevice = loginDevice.deviceId || dto.fcmToken;
+    let deviceId: string;
+    if (declaredDevice) {
+      deviceId = String(declaredDevice);
+    } else if (isAdminLogin) {
+      deviceId = `admin-${crypto.randomUUID()}`;
+    } else {
+      // Empreinte de l'appareil : inclut le user-agent pour ne pas confondre deux
+      // navigateurs / téléphones derrière la même adresse IP
+      const fingerprint = `${dto.deviceInfo || ''}|${dto.userAgent || ''}|${loginPlatform}|${ipAddress || ''}`;
+      deviceId = crypto.createHash('sha256').update(fingerprint).digest('hex');
+    }
+
+    if (!isAdminLogin) {
+      await this.prisma.session.updateMany({
+        where: {
+          userId: user.id,
+          isActive: true,
+          deviceId: deviceId,
+        },
+        data: { isActive: false, logoutAt: new Date() },
+      });
+    }
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
+    const createdSession = await this.prisma.session.create({
+      data: {
+        id: crypto.randomUUID(),
+        userId: user.id,
+        token: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        deviceId: deviceId,
+        deviceName: loginDevice.deviceName || null,
+        deviceType: loginDevice.deviceType || null,
+        os: loginDevice.os || null,
+        browser: loginDevice.browser || null,
+        appVersion: loginDevice.appVersion || null,
+        userAgent: loginDevice.userAgent || dto.deviceInfo || null,
+        ipAddress: ipAddress || loginDevice.ipAddress || null,
+        expiresAt: expiresAt,
+        isActive: true,
+        createdAt: new Date(),
+      },
+    });
+    await this.recordPlatform('sessions', createdSession.id, loginPlatform);
+
+    if (dto.fcmToken && dto.fcmToken.trim()) {
+      try {
+        // ✅ Le token FCM est aussi rangé dans pushToken (lu par le service de notification)
+        await this.prisma.device.upsert({
+          where: { deviceId: dto.fcmToken },
+          update: {
+            userId: user.id,
+            deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
+            deviceType: loginPlatform,
+            pushToken: dto.fcmToken,
+            isActive: true,
+            lastUsedAt: new Date(),
+            updatedAt: new Date(),
+          },
+          create: {
+            id: crypto.randomUUID(),
+            userId: user.id,
+            deviceId: dto.fcmToken,
+            deviceName: loginDevice.deviceName || dto.deviceInfo || 'unknown',
+            deviceType: loginPlatform,
+            pushToken: dto.fcmToken,
+            isActive: true,
+            lastUsedAt: new Date(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+      } catch (err) {
+        console.error('Erreur FCM token:', err);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ COMPTES DEPUIS L'API BANCAIRE (jamais depuis Prisma)
+    //    Tant que le mot de passe temporaire n'est pas changé, on ne
+    //    renvoie aucun compte : l'app doit d'abord forcer le changement.
+    // ═══════════════════════════════════════════════════════════════
+    const accounts = mustChangePassword
+      ? []
+      : await this.fetchClientAccounts(user.clientId, lang, 'Login');
+
+    const userSettings = await this.prisma.user_settings.findUnique({
+      where: { user_id: user.id },
+      select: {
+        language: true,
+        theme: true,
+        email_notifications: true,
+        sms_notifications: true,
+        push_notifications: true,
+        two_factor_enabled: true,
+      },
+    });
+
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        userId: user.id,
+        isActive: true,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const platformsById = await this.sessionPlatforms(sessions.map((x) => x.id));
+    const formattedSessions = sessions.map((session) => this.formatSession(session, platformsById));
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      message: mustChangePassword
+        ? this.i18nService.translate('password_change_required', lang)
+        : this.i18nService.translate('login_success', lang),
+      mustChangePassword,
+      sessionId: createdSession.id,
+      data: {
+        id: user.id,
+        email: user.email || null,
+        phone: user.phone,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        clientId: user.clientId,
+        sessions: formattedSessions,
+        platform: user.platform || null,
+        isEmailVerified: user.isEmailVerified,
+        isPhoneVerified: user.isPhoneVerified,
+        isTwoFactorEnabled: user.isTwoFactorEnabled,
+        twoFactorSecret: null, // ✅ jamais renvoyé au client
+        lastLoginAt: user.lastLoginAt,
+        pinStatus: user.pinStatus,
+        mustChangePassword,
+        tempPasswordExpiresAt: mustChangePassword ? user.tempPasswordExpiresAt : null,
+        accounts,   // ✅ depuis BankService (déjà nettoyé)
+        settings: {
+          language: userSettings?.language || user.preferredLanguage || 'fr',
+          theme: userSettings?.theme || 'system',
+          email_notifications: userSettings?.email_notifications ?? true,
+          sms_notifications: userSettings?.sms_notifications ?? true,
+          push_notifications: userSettings?.push_notifications ?? true,
+          two_factor_enabled: userSettings?.two_factor_enabled ?? false,
+        }
+      },
+    };
+  }
+
   // ==================== REFRESH TOKEN ====================
   async refreshToken(refreshToken: string) {
     try {
@@ -1625,6 +2074,11 @@ export class AuthServiceService {
       { identifier: user.phone },
       ipAddress ?? null,
     );
+
+    // ✅ Nouveau mot de passe : les appareils de confiance sont oubliés (OTP redemandé sur le Web)
+    await this.prisma.trustedDevice
+      .updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: new Date() } })
+      .catch(() => undefined);
 
     // Notification SMS (best effort)
     try {

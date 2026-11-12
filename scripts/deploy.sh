@@ -56,11 +56,13 @@ if [[ "$installed_fb" != 13.* ]]; then npm install firebase-admin@13.8.0 --no-au
 ok "firebase-admin $(node -p "require('firebase-admin/package.json').version")"
 npx prisma generate >/dev/null && ok "Client Prisma généré"
 
-step "5. Colonnes de traçabilité en base"
+step "5. Mises à jour de la base (traçabilité, suppression définitive, OTP Web)"
 DB_URL="$(grep -E '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | tr -d '"')"
 if [[ "$DB_URL" =~ mysql://([^:]+):([^@]+)@([^:/]+):?([0-9]*)/([^?]+) ]]; then
   MYSQL_PWD="${BASH_REMATCH[2]}" mysql -u "${BASH_REMATCH[1]}" -h "${BASH_REMATCH[3]}" -P "${BASH_REMATCH[4]:-3306}" --force "${BASH_REMATCH[5]}" \
     < prisma/sql/20261111_device_tracking.sql 2>&1 | grep -v "Duplicate column\|Duplicate key name" || true
+  MYSQL_PWD="${BASH_REMATCH[2]}" mysql -u "${BASH_REMATCH[1]}" -h "${BASH_REMATCH[3]}" -P "${BASH_REMATCH[4]:-3306}" --force "${BASH_REMATCH[5]}" \
+    < prisma/sql/20261112_user_deletion_and_login_otp.sql 2>&1 | grep -v "Duplicate\|Can't DROP\|check that column/key exists\|already exists" || true
   ok "Colonnes vérifiées (les services les ajoutent aussi au démarrage)"
 else
   warn "DATABASE_URL illisible : les services ajouteront les colonnes au démarrage"

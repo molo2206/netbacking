@@ -55,5 +55,11 @@
   "role_unchanged": "The user already has the role {{role}}.",
   "role_updated_success": "Role changed: {{oldRole}} → {{newRole}}.",
   "role_admin_without_email": "Warning: this administrator has no email address and cannot sign in to the administration until one is set.",
-  "role_admin_without_client_id": "Warning: this administrator has no client code and cannot sign in to the mobile app or Net Banking."
+  "role_admin_without_client_id": "Warning: this administrator has no client code and cannot sign in to the mobile app or Net Banking.",
+  "user_deleted_permanently": "User {{name}} has been permanently deleted. Their history is kept in the audit log.",
+  "user_delete_forbidden": "Only administrators can delete a user.",
+  "cannot_delete_self": "You cannot delete your own account from the administration.",
+  "user_delete_admin_super_only": "Only a super administrator can delete an administrator.",
+  "user_delete_migration_required": "Deletion impossible: the database must be updated (prisma/sql/20261112_user_deletion_and_login_otp.sql).",
+  "user_delete_failed": "User deletion failed. No data was changed."
 }

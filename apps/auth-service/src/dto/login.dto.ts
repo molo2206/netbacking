@@ -31,6 +31,10 @@ export class LoginDto {
   @IsString()
   platform?: string;
 
+  /** « Se souvenir de moi » : après l'OTP, cet appareil + cette IP deviennent de confiance. */
+  @IsOptional()
+  rememberMe?: boolean;
+
   /** Identifiant stable de l'appareil (facultatif) : une session par appareil. */
   @IsOptional()
   @IsString()

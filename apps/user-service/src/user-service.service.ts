@@ -31,6 +31,7 @@ import {
 } from '../../../libs/common/src/bank/bank-accounts.util';
 import { writeAudit } from '../../../libs/common/src/audit/write-audit';
 import { clearSessionCheckCache } from '../../../libs/common/src/security/session-validator';
+import { phoneVariants } from '../../../libs/common/src/utils/phone.util';
 
 @Injectable()
 export class UserServiceService {
@@ -537,17 +538,158 @@ export class UserServiceService {
   }
 
   // ========================= DELETE USER =========================
-  async deleteUser(id: string, lang: string = 'fr'): Promise<ApiResponse<null>> {
-    console.log(`[deleteUser] Langue utilisée : ${lang} pour l'utilisateur ${id}`);
+  /**
+   * SUPPRESSION DÉFINITIVE d'un utilisateur (back-office).
+   *
+   * Supprimé avec l'utilisateur (données personnelles / d'accès) :
+   *   sessions, appareils et tokens push, appareils de confiance, codes OTP,
+   *   historique de connexion, tentatives de connexion, réinitialisations de mot
+   *   de passe, paramètres, rôles et ressources, bénéficiaires, notifications, KYC.
+   *
+   * CONSERVÉ (traçabilité / données financières) :
+   *   audit_logs, activity_logs, transfers → la référence devient NULL et le nom
+   *   de l'utilisateur est recopié dans la ligne (userName / userRole).
+   *   + une entrée USER_DELETED_PERMANENTLY garde un résumé du compte supprimé.
+   *
+   * Le compte bancaire n'est jamais touché (il appartient à la banque).
+   * L'accès est coupé immédiatement : sessions supprimées → toute requête avec
+   * un ancien jeton est refusée (401).
+   */
+  async deleteUser(
+    id: string,
+    lang: string = 'fr',
+    requesterId?: string,
+    reason?: string,
+  ): Promise<ApiResponse<any>> {
+    const err = (key: string, statusCode: number, params?: Record<string, any>) =>
+      new RpcException({ status: 'error', message: this.i18nService.translate(key, lang, params), statusCode });
 
-    await this.prisma.user.update({
-      where: { id },
-      data: { status: users_status.LOCKED, deletedAt: new Date() },
-    });
+    const target = await this.prisma.user.findUnique({ where: { id } });
+    if (!target) throw err('user_not_found', 404);
+
+    // ── Contrôles de permission ──
+    const requester = requesterId
+      ? await this.prisma.user.findUnique({ where: { id: requesterId }, select: { id: true, role: true, deletedAt: true } })
+      : null;
+    if (requesterId) {
+      if (!requester || requester.deletedAt || !['ADMIN', 'SUPER_ADMIN'].includes(String(requester.role))) {
+        throw err('user_delete_forbidden', 403);
+      }
+      if (requester.id === id) throw err('cannot_delete_self', 403);
+      const targetIsAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(String(target.role));
+      if (targetIsAdmin && requester.role !== 'SUPER_ADMIN') throw err('user_delete_admin_super_only', 403);
+    }
+    if (target.role === UserRole.SUPER_ADMIN) {
+      const others = await this.prisma.user.count({
+        where: { role: UserRole.SUPER_ADMIN, deletedAt: null, status: users_status.ACTIVE, id: { not: id } },
+      });
+      if (others === 0) throw err('last_super_admin', 409);
+    }
+
+    const fullName = `${target.firstName || ''} ${target.lastName || ''}`.trim();
+    const label = `${fullName || target.email || target.phone}${target.clientId ? ` (${target.clientId})` : ''} [supprimé]`.slice(0, 255);
+    const roleLabel = String(target.role || 'USER');
+    const identifiers = Array.from(new Set(
+      [target.email, target.phone, target.clientId, ...phoneVariants(target.phone)].filter(Boolean).map(String),
+    ));
+
+    // Résumé conservé dans le journal d'audit (sans mot de passe, PIN ni secrets)
+    const counts = await Promise.all([
+      this.prisma.session.count({ where: { userId: id } }),
+      this.prisma.device.count({ where: { userId: id } }),
+      this.prisma.beneficiary.count({ where: { userId: id } }),
+      this.prisma.notification.count({ where: { userId: id } }),
+      this.prisma.loginHistory.count({ where: { userId: id } }),
+      this.prisma.auditLog.count({ where: { userId: id } }),
+    ]).catch(() => [null, null, null, null, null, null]);
+    const snapshot = {
+      id: target.id,
+      clientId: target.clientId,
+      firstName: target.firstName,
+      lastName: target.lastName,
+      email: target.email,
+      phone: target.phone,
+      role: target.role,
+      status: target.status,
+      platform: target.platform,
+      createdAt: target.createdAt,
+      approvedAt: target.approvedAt,
+      lastLoginAt: target.lastLoginAt,
+      lastLoginIp: target.lastLoginIp,
+      deleted: {
+        sessions: counts[0], devices: counts[1], beneficiaries: counts[2],
+        notifications: counts[3], loginHistory: counts[4],
+      },
+      keptAuditEntries: counts[5],
+    };
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Historique conservé : référence → NULL, nom recopié dans la ligne
+        await tx.$executeRawUnsafe(
+          'UPDATE `audit_logs` SET `userName` = COALESCE(`userName`, ?), `userRole` = COALESCE(`userRole`, ?), `userId` = NULL WHERE `userId` = ?',
+          label, roleLabel, id,
+        );
+        await tx.$executeRawUnsafe(
+          'UPDATE `activity_logs` SET `userName` = COALESCE(`userName`, ?), `userRole` = COALESCE(`userRole`, ?), `userId` = NULL WHERE `userId` = ?',
+          label, roleLabel, id,
+        );
+        await tx.$executeRawUnsafe('UPDATE `transfers` SET `initiatedBy` = NULL WHERE `initiatedBy` = ?', id);
+
+        // 2. Données personnelles / d'accès supprimées
+        await tx.session.deleteMany({ where: { userId: id } });
+        await tx.device.deleteMany({ where: { userId: id } });
+        await tx.trustedDevice.deleteMany({ where: { userId: id } }).catch(() => undefined);
+        await tx.loginOtpChallenge.deleteMany({ where: { userId: id } }).catch(() => undefined);
+        await tx.otp.deleteMany({ where: { OR: [{ userId: id }, { email: { in: identifiers } }] } });
+        await tx.passwordResetToken.deleteMany({ where: { userId: id } });
+        await tx.loginHistory.deleteMany({ where: { userId: id } });
+        await tx.login_attempt.deleteMany({ where: { userId: id } });
+        await tx.user_settings.deleteMany({ where: { user_id: id } });
+        await tx.user_roles.deleteMany({ where: { userId: id } });
+        await tx.user_has_resources.deleteMany({ where: { userId: id } });
+        await tx.beneficiary.deleteMany({ where: { userId: id } });
+        await tx.notification.deleteMany({ where: { userId: id } });
+        await tx.kYCDocument.deleteMany({ where: { userId: id } });
+
+        // 3. L'utilisateur
+        await tx.user.delete({ where: { id } });
+      }, { timeout: 60000 });
+    } catch (e) {
+      const msg = String((e as any)?.message || e);
+      console.error(`[deleteUser] Suppression de ${id} impossible : ${msg}`);
+      if (/foreign key|Foreign key|constraint|cannot be null|Column 'userId'|initiatedBy/i.test(msg)) {
+        throw err('user_delete_migration_required', 500);
+      }
+      throw err('user_delete_failed', 500);
+    }
+
+    clearSessionCheckCache();
+
+    try {
+      await writeAudit(this.prisma, {
+        data: {
+          userId: requesterId || undefined,
+          action: 'USER_DELETED_PERMANENTLY',
+          entity: 'USER',
+          entityId: id,
+          oldValue: JSON.stringify(snapshot),
+          message: JSON.stringify({
+            deletedUser: label,
+            clientId: target.clientId,
+            role: target.role,
+            reason: reason || null,
+          }),
+          level: 'WARN',
+        },
+      });
+    } catch (e) {
+      console.error('Audit USER_DELETED_PERMANENTLY failed:', e);
+    }
 
     return {
-      message: this.i18nService.translate('user_deleted_success', lang),
-      data: null,
+      message: this.i18nService.translate('user_deleted_permanently', lang, { name: fullName || target.clientId || target.phone }),
+      data: { id, clientId: target.clientId, deleted: true, permanent: true },
     };
   }
 

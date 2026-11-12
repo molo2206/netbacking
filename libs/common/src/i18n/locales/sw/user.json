@@ -56,5 +56,11 @@
   "role_unchanged": "Mtumiaji tayari ana jukumu {{role}}.",
   "role_updated_success": "Jukumu limebadilishwa: {{oldRole}} → {{newRole}}.",
   "role_admin_without_email": "Tahadhari: msimamizi huyu hana anwani ya barua pepe; hawezi kuingia kwenye usimamizi hadi iwekwe.",
-  "role_admin_without_client_id": "Tahadhari: msimamizi huyu hana nambari ya mteja; hawezi kuingia kwenye programu ya simu wala Net Banking."
+  "role_admin_without_client_id": "Tahadhari: msimamizi huyu hana nambari ya mteja; hawezi kuingia kwenye programu ya simu wala Net Banking.",
+  "user_deleted_permanently": "Mtumiaji {{name}} amefutwa kabisa. Historia yake imehifadhiwa kwenye kumbukumbu za ukaguzi.",
+  "user_delete_forbidden": "Wasimamizi pekee wanaweza kufuta mtumiaji.",
+  "cannot_delete_self": "Huwezi kufuta akaunti yako mwenyewe kutoka kwenye usimamizi.",
+  "user_delete_admin_super_only": "Msimamizi mkuu pekee anaweza kufuta msimamizi.",
+  "user_delete_migration_required": "Haiwezekani kufuta: hifadhidata lazima isasishwe (prisma/sql/20261112_user_deletion_and_login_otp.sql).",
+  "user_delete_failed": "Kufuta mtumiaji kumeshindwa. Hakuna data iliyobadilishwa."
 }

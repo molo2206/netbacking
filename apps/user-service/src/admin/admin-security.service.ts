@@ -104,6 +104,10 @@ export class AdminSecurityService {
       where: { userId, isActive: true },
       data: { isActive: false, logoutAt: new Date() },
     });
+    // ✅ Appareils de confiance oubliés : l'OTP sera redemandé à la prochaine connexion Web
+    await this.prisma.trustedDevice
+      .updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } })
+      .catch(() => undefined);
     return res.count;
   }
 

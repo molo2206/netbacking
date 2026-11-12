@@ -258,6 +258,88 @@ export class ApiGatewayController {
     );
   }
 
+  /**
+   * OTP de connexion Web : quand /auth/login répond { requiresOtp: true, challengeId },
+   * le front envoie ici le code reçu par SMS / e-mail.
+   * Body : { challengeId, otpCode, rememberMe? }  → même réponse qu'une connexion réussie.
+   */
+  @Post('auth/login/verify-otp')
+  async loginVerifyOtp(
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+    @Headers('x-client') clientHeader?: string,
+    @Headers('user-agent') userAgentHeader?: string,
+    @Request() req?: any,
+  ) {
+    if (!body?.challengeId || !body?.otpCode) {
+      throw new HttpException('challengeId et otpCode sont obligatoires', HttpStatus.BAD_REQUEST);
+    }
+    return this.sendAuthMessage(
+      'auth.loginVerifyOtp',
+      {
+        challengeId: String(body.challengeId),
+        otpCode: String(body.otpCode),
+        rememberMe: body.rememberMe,
+        deviceId: body.deviceId,
+        deviceInfo: body.deviceInfo,
+        fcmToken: body.fcmToken || body.deviceToken || body.pushToken || undefined,
+        platform: body.platform || clientHeader || undefined,
+        userAgent: userAgentHeader || undefined,
+        ipAddress: req?.ip || undefined,
+        lang: langHeader || 'fr',
+      },
+      'OTP verification failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /** Renvoi du code de connexion. Body : { challengeId } */
+  @Post('auth/login/resend-otp')
+  async loginResendOtp(
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!body?.challengeId) {
+      throw new HttpException('challengeId est obligatoire', HttpStatus.BAD_REQUEST);
+    }
+    return this.sendAuthMessage(
+      'auth.loginResendOtp',
+      { challengeId: String(body.challengeId), lang: langHeader || 'fr' },
+      'OTP resend failed',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  // ── Appareils de confiance (« Se souvenir de moi ») ──
+
+  @Get('users/me/trusted-devices')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async myTrustedDevices(@CurrentUser() currentUser: any) {
+    return this.sendAuthMessage('auth.trustedDevices.list', { userId: currentUser.id }, 'Failed to get trusted devices', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  @Delete('users/me/trusted-devices')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async revokeAllMyTrustedDevices(@CurrentUser() currentUser: any) {
+    return this.sendAuthMessage('auth.trustedDevices.revoke', { userId: currentUser.id }, 'Failed to revoke trusted devices', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  @Delete('users/me/trusted-devices/:id')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async revokeMyTrustedDevice(@CurrentUser() currentUser: any, @Param('id') id: string) {
+    return this.sendAuthMessage('auth.trustedDevices.revoke', { userId: currentUser.id, id }, 'Failed to revoke trusted device', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
+  /** Admin : retire tous les appareils de confiance d'un utilisateur (OTP redemandé partout). */
+  @Delete('admin/users/:userId/trusted-devices')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminRevokeTrustedDevices(@CurrentUser() currentUser: any, @Param('userId') userId: string) {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
+      throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
+    }
+    return this.sendAuthMessage('auth.trustedDevices.revoke', { userId }, 'Failed to revoke trusted devices', HttpStatus.INTERNAL_SERVER_ERROR);
+  }
+
   @Post('auth/refresh')
   async refresh(@Body('refreshToken') refreshToken: string) {
     if (!refreshToken) {
@@ -843,11 +925,18 @@ export class ApiGatewayController {
     );
   }
 
+  /**
+   * Suppression DÉFINITIVE d'un utilisateur (ligne supprimée de la table users).
+   * L'historique (audit, activité, transferts) est conservé ; l'accès est coupé.
+   * Body facultatif : { reason }
+   */
   @Delete('users/:id')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async deleteUser(
     @Param('id') id: string,
     @CurrentUser() currentUser: any,
+    @Body() body?: any,
+    @Headers('lang') langHeader?: string,
   ) {
     if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
       throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
@@ -857,7 +946,7 @@ export class ApiGatewayController {
     }
     return this.sendUserMessage(
       'delete_user',
-      { id },
+      { id, requesterId: currentUser.id, reason: body?.reason, lang: langHeader || 'fr' },
       'Delete user failed',
       HttpStatus.BAD_REQUEST
     );

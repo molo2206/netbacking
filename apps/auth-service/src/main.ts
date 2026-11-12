@@ -7,6 +7,7 @@ import { AuthServiceModule } from './auth-service.module';
 import { Logger } from '@nestjs/common';
 import { RequestContextInterceptor } from '../../../libs/common/src/context/request-context.interceptor';
 import { ensureTrackingColumns } from '../../../libs/common/src/audit/write-audit';
+import { ensureLoginOtpTables } from '../../../libs/common/src/db/ensure-schema';
 import { getSharedPrisma } from '../../../libs/common/src/db/shared-prisma';
 
 async function bootstrap() {
@@ -33,6 +34,10 @@ async function bootstrap() {
   app.useGlobalInterceptors(new RequestContextInterceptor());
   // ✅ Colonnes de traçabilité (appareil / plateforme) présentes en base
   await ensureTrackingColumns(getSharedPrisma(), 'auth-service');
+  // ✅ OTP de connexion Web : tables trusted_devices / login_otp_challenges
+  if (String(process.env.AUTO_DB_SCHEMA_UPDATES ?? 'true').toLowerCase() !== 'false') {
+    await ensureLoginOtpTables(getSharedPrisma(), 'auth-service');
+  }
 
   await app.listen();
   logger.log('🔐 Auth microservice is running with RabbitMQ');

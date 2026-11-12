@@ -63,6 +63,8 @@ model User {
   user_has_resources   user_has_resources[]
   user_roles           user_roles[]
   user_settings        user_settings?
+  trustedDevices       TrustedDevice[]
+  loginOtpChallenges   LoginOtpChallenge[]
 
   @@index([phone], map: "idx_users_phone")
   @@index([role], map: "idx_users_role")
@@ -141,7 +143,8 @@ model Transfer {
   type              transfers_type
   status            transfers_status?   @default(PENDING)
   description       String?             @db.Text
-  initiatedBy       String              @db.VarChar(36)
+  /// NULL si l'utilisateur a été supprimé définitivement (historique conservé)
+  initiatedBy       String?             @db.VarChar(36)
   approvedBy        String?             @db.VarChar(36)
   completedAt       DateTime?           @db.DateTime(0)
   failedReason      String?             @db.Text
@@ -151,7 +154,7 @@ model Transfer {
   transaction       Transaction[]
   senderAccount     Account             @relation("SenderAccount", fields: [senderAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_1")
   receiverAccount   Account             @relation("ReceiverAccount", fields: [receiverAccountId], references: [id], onUpdate: Restrict, map: "transfers_ibfk_2")
-  senderUser        User                @relation("SentTransfers", fields: [initiatedBy], references: [id], onUpdate: Restrict, map: "transfers_ibfk_3")
+  senderUser        User?               @relation("SentTransfers", fields: [initiatedBy], references: [id], onDelete: SetNull, onUpdate: Restrict, map: "transfers_ibfk_3")
 
   @@index([createdAt], map: "idx_transfers_createdAt")
   @@index([platform], map: "idx_transfers_platform")
@@ -255,7 +258,7 @@ model AuditLog {
   browser    String?          @db.VarChar(60)
   deviceId   String?          @db.VarChar(255)
   appVersion String?          @db.VarChar(30)
-  user      User?             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "audit_logs_ibfk_1")
+  user      User?             @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Restrict, map: "audit_logs_ibfk_1")
 
   @@index([action], map: "idx_audit_logs_action")
   @@index([createdAt], map: "idx_audit_logs_createdAt")
@@ -364,7 +367,8 @@ model Settings {
 
 model activity_logs {
   id           String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  userId       String    @db.VarChar(36)
+  /// NULL si l'utilisateur a été supprimé définitivement (historique conservé)
+  userId       String?   @db.VarChar(36)
   userName     String?   @db.VarChar(255)
   userRole     String?   @db.VarChar(100)
   activityType String    @db.VarChar(100)
@@ -374,7 +378,7 @@ model activity_logs {
   userAgent    String?   @db.Text
   metadata     String?   @db.LongText
   createdAt    DateTime? @default(now()) @db.DateTime(0)
-  users        User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "activity_logs_ibfk_1")
+  users        User?     @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Restrict, map: "activity_logs_ibfk_1")
 
   @@index([activityType], map: "idx_activity_logs_activityType")
   @@index([createdAt], map: "idx_activity_logs_createdAt")
@@ -766,4 +770,49 @@ enum checkbooks_status {
   ACTIVE
   COMPLETED
   CANCELLED
+}
+
+/// Appareils + adresses IP de confiance (connexion Web avec « Se souvenir de moi »)
+model TrustedDevice {
+  id         String    @id @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  deviceKey  String    @db.VarChar(64)
+  ipAddress  String    @db.VarChar(45)
+  deviceName String?   @db.VarChar(100)
+  userAgent  String?   @db.Text
+  platform   String?   @db.VarChar(20)
+  createdAt  DateTime  @default(now()) @db.DateTime(0)
+  lastUsedAt DateTime? @db.DateTime(0)
+  expiresAt  DateTime  @db.DateTime(0)
+  revokedAt  DateTime? @db.DateTime(0)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "trusted_devices_user_fk")
+
+  @@unique([userId, deviceKey, ipAddress], map: "uk_trusted_device")
+  @@index([userId], map: "idx_trusted_devices_userId")
+  @@map("trusted_devices")
+}
+
+/// Codes OTP de connexion Web (nouvel appareil / nouvelle adresse IP)
+model LoginOtpChallenge {
+  id         String    @id @db.VarChar(36)
+  userId     String    @db.VarChar(36)
+  codeHash   String    @db.VarChar(64)
+  reason     String?   @db.VarChar(30)
+  channels   String?   @db.VarChar(30)
+  deviceKey  String    @db.VarChar(64)
+  ipAddress  String?   @db.VarChar(45)
+  userAgent  String?   @db.Text
+  platform   String?   @db.VarChar(20)
+  rememberMe Boolean   @default(false)
+  attempts   Int       @default(0)
+  sendCount  Int       @default(1)
+  lastSentAt DateTime  @default(now()) @db.DateTime(0)
+  expiresAt  DateTime  @db.DateTime(0)
+  consumedAt DateTime? @db.DateTime(0)
+  createdAt  DateTime  @default(now()) @db.DateTime(0)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "login_otp_challenges_user_fk")
+
+  @@index([userId], map: "idx_login_otp_userId")
+  @@index([createdAt], map: "idx_login_otp_createdAt")
+  @@map("login_otp_challenges")
 }

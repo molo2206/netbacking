@@ -74,6 +74,37 @@ export class AuthServiceController {
     }
   }
 
+  // ✅ OTP de connexion Web (nouvel appareil / nouvelle IP)
+  @MessagePattern('auth.loginVerifyOtp')
+  async loginVerifyOtp(@Payload() data: any) {
+    try {
+      return await this.authService.verifyLoginOtp(data);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({ status: 'error', message: error?.message || 'OTP verification failed', statusCode: 400 });
+    }
+  }
+
+  @MessagePattern('auth.loginResendOtp')
+  async loginResendOtp(@Payload() data: { challengeId: string; lang?: string }) {
+    try {
+      return await this.authService.resendLoginOtp(data);
+    } catch (error) {
+      if (error instanceof RpcException) throw error;
+      throw new RpcException({ status: 'error', message: error?.message || 'OTP resend failed', statusCode: 400 });
+    }
+  }
+
+  @MessagePattern('auth.trustedDevices.list')
+  async trustedDevicesList(@Payload() data: { userId: string }) {
+    return this.authService.listTrustedDevices(data.userId);
+  }
+
+  @MessagePattern('auth.trustedDevices.revoke')
+  async trustedDevicesRevoke(@Payload() data: { userId: string; id?: string }) {
+    return this.authService.revokeTrustedDevices(data.userId, data.id);
+  }
+
   @MessagePattern('auth.refresh')
   async refreshToken(@Payload() refreshTokenDto: RefreshTokenDto) {
     try {

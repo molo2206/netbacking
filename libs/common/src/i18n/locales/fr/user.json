@@ -55,5 +55,11 @@
   "role_unchanged": "L'utilisateur a déjà le rôle {{role}}.",
   "role_updated_success": "Rôle modifié : {{oldRole}} → {{newRole}}.",
   "role_admin_without_email": "Attention : cet administrateur n'a pas d'adresse e-mail ; il ne pourra pas se connecter à l'administration tant qu'une adresse n'est pas renseignée.",
-  "role_admin_without_client_id": "Attention : cet administrateur n'a pas de code client ; il ne pourra pas se connecter à l'application mobile ni au Net Banking."
+  "role_admin_without_client_id": "Attention : cet administrateur n'a pas de code client ; il ne pourra pas se connecter à l'application mobile ni au Net Banking.",
+  "user_deleted_permanently": "L'utilisateur {{name}} a été supprimé définitivement. Son historique est conservé dans le journal d'audit.",
+  "user_delete_forbidden": "Seuls les administrateurs peuvent supprimer un utilisateur.",
+  "cannot_delete_self": "Vous ne pouvez pas supprimer votre propre compte depuis l'administration.",
+  "user_delete_admin_super_only": "Seul un super administrateur peut supprimer un administrateur.",
+  "user_delete_migration_required": "Suppression impossible : la base de données doit être mise à jour (prisma/sql/20261112_user_deletion_and_login_otp.sql).",
+  "user_delete_failed": "La suppression de l'utilisateur a échoué. Aucune donnée n'a été modifiée."
 }

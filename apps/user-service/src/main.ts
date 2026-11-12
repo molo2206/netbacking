@@ -5,6 +5,7 @@ import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { UserServiceModule } from './user-service.module';
 import { RequestContextInterceptor } from '../../../libs/common/src/context/request-context.interceptor';
 import { ensureTrackingColumns } from '../../../libs/common/src/audit/write-audit';
+import { ensureUserDeletionConstraints } from '../../../libs/common/src/db/ensure-schema';
 import { getSharedPrisma } from '../../../libs/common/src/db/shared-prisma';
 
 async function bootstrap() {
@@ -26,6 +27,10 @@ async function bootstrap() {
   app.useGlobalInterceptors(new RequestContextInterceptor());
   // ✅ Colonnes de traçabilité (appareil / plateforme) présentes en base
   await ensureTrackingColumns(getSharedPrisma(), 'user-service');
+  // ✅ Suppression définitive : historique conservé (FK ON DELETE SET NULL)
+  if (String(process.env.AUTO_DB_SCHEMA_UPDATES ?? 'true').toLowerCase() !== 'false') {
+    await ensureUserDeletionConstraints(getSharedPrisma(), 'user-service');
+  }
 
   await app.listen();
   console.log('✅ User Service is listening on RabbitMQ queue: user_queue');
