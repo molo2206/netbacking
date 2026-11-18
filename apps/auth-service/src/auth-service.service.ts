@@ -35,6 +35,17 @@ import {
 } from '@app/common';
 import { writeAudit } from '../../../libs/common/src/audit/write-audit';
 import { checkSmsNumber, maskPhone } from '../../../libs/common/src/utils/phone.util';
+import {
+  decryptTotpSecret,
+  encryptTotpSecret,
+  generateBackupCodes,
+  generateTotpSecret,
+  hashBackupCode,
+  otpauthUrl,
+  readTwoFactorState,
+  twoFactorConfig,
+  verifyTotp,
+} from '../../../libs/common/src/security/totp';
 import { clientFromOrigin, getRequestContext, parseDevice } from '../../../libs/common/src/context/request-context';
 
 const registerLocks: Map<string, boolean> = new Map();
@@ -890,7 +901,13 @@ export class AuthServiceService {
       }
 
       // ✅ OTP obligatoire sur le Web : appareil ou adresse IP non reconnus
-      const otpChallenge = await this.loginOtpGate({ user, dto, ipAddress, loginDevice, loginPlatform, lang });
+      //    (compte avec 2FA activée : code de l'application d'authentification, à chaque connexion)
+      if (user.isTwoFactorEnabled && !this.twoFactorActive(user)) {
+        this.logger.warn(`[2FA] Clé illisible pour ${user.id} (ancienne 2FA ou TWO_FACTOR_ENCRYPTION_KEY changée) : OTP SMS/e-mail utilisé`);
+      }
+      const otpChallenge = this.twoFactorActive(user)
+        ? await this.twoFactorLoginGate({ user, dto, ipAddress, loginDevice, loginPlatform, lang })
+        : await this.loginOtpGate({ user, dto, ipAddress, loginDevice, loginPlatform, lang });
       if (otpChallenge) return otpChallenge;
 
       return await this.finishLogin({ user, dto, ipAddress, loginDevice, loginPlatform, mustChangePassword, lang });
@@ -911,7 +928,7 @@ export class AuthServiceService {
   // ═════════════════════════════════════════════════════════════════════
   // OTP DE CONNEXION WEB (nouvel appareil / nouvelle adresse IP)
   // ═════════════════════════════════════════════════════════════════════
-  //  - Exigé sur les plateformes LOGIN_OTP_PLATFORMS (défaut : WEB, BACK_OFFICE, MOBILE)
+  //  - Exigé sur les plateformes LOGIN_OTP_PLATFORMS (défaut : ALL = toutes, outils API compris)
   //    quand l'appareil + l'adresse IP ne sont pas enregistrés comme fiables.
   //  - Code à 6 chiffres envoyé par SMS et/ou e-mail (LOGIN_OTP_CHANNELS).
   //  - Expiration (LOGIN_OTP_TTL_SECONDS), tentatives limitées (LOGIN_OTP_MAX_ATTEMPTS),
@@ -930,7 +947,8 @@ export class AuthServiceService {
       String(process.env[name] || def).toUpperCase().split(',').map((x) => x.trim()).filter(Boolean);
     return {
       enabled: String(process.env.LOGIN_OTP_ENABLED ?? 'true').toLowerCase() !== 'false',
-      platforms: list('LOGIN_OTP_PLATFORMS', 'WEB,BACK_OFFICE,MOBILE'),
+      // ALL = toutes les plateformes, y compris les outils API (Postman, Hoppscotch, curl…)
+      platforms: list('LOGIN_OTP_PLATFORMS', 'ALL'),
       channels: list('LOGIN_OTP_CHANNELS', 'SMS,EMAIL'),
       ttlSeconds: num('LOGIN_OTP_TTL_SECONDS', 300),
       maxAttempts: num('LOGIN_OTP_MAX_ATTEMPTS', 5),
@@ -1036,7 +1054,9 @@ export class AuthServiceService {
   private async loginOtpGate(params: { user: any; dto: any; ipAddress?: string; loginDevice: any; loginPlatform: string; lang: string }) {
     const { user, dto, loginDevice, loginPlatform, lang } = params;
     const cfg = this.loginOtpConfig();
-    if (!cfg.enabled || !cfg.platforms.includes(String(loginPlatform).toUpperCase())) return null;
+    // ⚠️ Sans « ALL », une requête sans plateforme reconnue (outil API) échapperait à l'OTP
+    const platformKey = String(loginPlatform || 'UNKNOWN').toUpperCase();
+    if (!cfg.enabled || (!cfg.platforms.includes('ALL') && !cfg.platforms.includes(platformKey))) return null;
 
     const ip = params.ipAddress || loginDevice?.ipAddress || 'unknown';
     const deviceKey = this.loginDeviceKey(loginDevice, dto);
@@ -1190,11 +1210,19 @@ export class AuthServiceService {
       throw new RpcException({ status: 'error', code: 'LOGIN_OTP_DEVICE_MISMATCH', message: this.i18nService.translate('login_otp_device_mismatch', lang), statusCode: 400 });
     }
 
-    const code = String(data.otpCode || '').replace(/\s/g, '');
-    const valid = /^\d{6}$/.test(code) && crypto.timingSafeEqual(
-      Buffer.from(this.hashLoginOtp(challenge.id, code)),
-      Buffer.from(challenge.codeHash),
-    );
+    const code = String(data.otpCode || '').trim();
+    let valid: boolean;
+    if (challenge.reason === 'TWO_FACTOR') {
+      // Code de l'application d'authentification (ou code de secours)
+      const owner = await this.prisma.user.findUnique({ where: { id: challenge.userId } });
+      valid = !!owner && (await this.checkTwoFactorCode(owner, code)).ok;
+    } else {
+      const digits = code.replace(/\s/g, '');
+      valid = /^\d{6}$/.test(digits) && crypto.timingSafeEqual(
+        Buffer.from(this.hashLoginOtp(challenge.id, digits)),
+        Buffer.from(challenge.codeHash),
+      );
+    }
     if (!valid) {
       const updated = await this.prisma.loginOtpChallenge.update({
         where: { id: challenge.id },
@@ -1226,7 +1254,8 @@ export class AuthServiceService {
     }
 
     const ipAddress = data.ipAddress || ctx.ipAddress || challenge.ipAddress || undefined;
-    const rememberMe = challenge.rememberMe || data.rememberMe === true || String(data.rememberMe) === 'true';
+    const rememberMe = challenge.reason !== 'TWO_FACTOR' &&
+      (challenge.rememberMe || data.rememberMe === true || String(data.rememberMe) === 'true');
     if (rememberMe) {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + cfg.trustedDays * 24 * 3600 * 1000);
@@ -1277,6 +1306,9 @@ export class AuthServiceService {
     const cfg = this.loginOtpConfig();
     const challenge = await this.findOpenChallenge(data.challengeId, lang);
     const now = Date.now();
+    if (challenge.reason === 'TWO_FACTOR') {
+      throw new RpcException({ status: 'error', code: 'TWO_FACTOR_NO_RESEND', message: this.i18nService.translate('two_factor_no_resend', lang), statusCode: 400 });
+    }
 
     const wait = Math.ceil((challenge.lastSentAt.getTime() + cfg.resendSeconds * 1000 - now) / 1000);
     if (wait > 0) {
@@ -2839,61 +2871,222 @@ export class AuthServiceService {
     return result;
   }
 
-  // ==================== ENABLE 2FA ====================
-  async enableTwoFactor(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+  // ==================== 2FA (application d'authentification) ====================
+  //  Vraie 2FA TOTP (Google Authenticator, Microsoft Authenticator, Authy…).
+  //  Réglages .env : TWO_FACTOR_ENABLED, TWO_FACTOR_ISSUER, TWO_FACTOR_ENCRYPTION_KEY,
+  //  TWO_FACTOR_WINDOW, TWO_FACTOR_BACKUP_CODES (voir libs/common/src/security/totp.ts).
+  //  - users.twoFactorSecret       : clé chiffrée (AES-256-GCM)
+  //  - users.twoFactorBackupCodes  : codes de secours hachés + dernière période utilisée
 
-    if (!user) {
-      throw new UnauthorizedException('User not found');
+  private twoFactorError(key: string, lang: string, statusCode = 400, code?: string) {
+    return new RpcException({ status: 'error', ...(code ? { code } : {}), message: this.i18nService.translate(key, lang), statusCode });
+  }
+
+  /** 2FA réellement active pour cet utilisateur (clé lisible). */
+  private twoFactorActive(user: any): boolean {
+    return twoFactorConfig().enabled && user?.isTwoFactorEnabled === true && !!decryptTotpSecret(user?.twoFactorSecret);
+  }
+
+  /**
+   * Vérifie un code de l'application OU un code de secours.
+   * Met à jour la dernière période utilisée (anti-rejeu) ou consomme le code de secours.
+   */
+  private async checkTwoFactorCode(user: any, code: string): Promise<{ ok: boolean; method?: 'TOTP' | 'BACKUP'; backupLeft?: number }> {
+    const secret = decryptTotpSecret(user?.twoFactorSecret);
+    if (!secret) return { ok: false };
+    const state = readTwoFactorState(user.twoFactorBackupCodes);
+    const cfg = twoFactorConfig();
+
+    const step = verifyTotp(secret, code, cfg.window, state.lastStep ?? null);
+    if (step !== null) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { twoFactorBackupCodes: JSON.stringify({ ...state, lastStep: step }) },
+      });
+      return { ok: true, method: 'TOTP', backupLeft: state.backup.length };
     }
 
-    const secret = crypto.randomBytes(20).toString('hex');
+    const hashed = hashBackupCode(code);
+    if (/^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(String(code || '').trim()) && state.backup.includes(hashed)) {
+      const backup = state.backup.filter((h) => h !== hashed);
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { twoFactorBackupCodes: JSON.stringify({ ...state, backup }) },
+      });
+      return { ok: true, method: 'BACKUP', backupLeft: backup.length };
+    }
+    return { ok: false };
+  }
 
+  /** Étape 1 : nouvelle clé + lien QR code. La 2FA n'est active qu'après confirmation d'un code. */
+  async enableTwoFactor(userId: string, lang: string = 'fr') {
+    const cfg = twoFactorConfig();
+    if (!cfg.enabled) throw this.twoFactorError('two_factor_disabled_globally', lang, 403, 'TWO_FACTOR_DISABLED');
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw this.twoFactorError('user_not_found', lang, 404);
+    if (this.twoFactorActive(user)) throw this.twoFactorError('two_factor_already_enabled', lang, 409, 'TWO_FACTOR_ALREADY_ENABLED');
+
+    const secret = generateTotpSecret();
+    const account = user.email || user.clientId || user.phone;
     await this.prisma.user.update({
       where: { id: userId },
-      data: {
-        isTwoFactorEnabled: true,
-        twoFactorSecret: secret,
-      },
+      data: { isTwoFactorEnabled: false, twoFactorSecret: encryptTotpSecret(secret), twoFactorBackupCodes: null },
     });
+    await writeAudit(this.prisma, {
+      data: { userId, action: 'TWO_FACTOR_SETUP_STARTED', entity: 'USER', entityId: userId, level: 'INFO' },
+    }).catch(() => undefined);
 
-    const qrCodeUrl = `otpauth://totp/Netbacking:${user.email}?secret=${secret}&issuer=Netbacking`;
-
+    const url = otpauthUrl(secret, account, cfg.issuer);
     return {
       success: true,
-      message: '2FA enabled successfully',
+      message: this.i18nService.translate('two_factor_setup_started', lang),
+      data: {
+        issuer: cfg.issuer,
+        account,
+        secret,          // à saisir manuellement si le QR code ne peut pas être scanné
+        otpauthUrl: url, // à afficher en QR code
+      },
+      // compatibilité avec l'ancienne réponse
       secret,
-      qrCode: qrCodeUrl,
+      qrCode: url,
     };
   }
 
-  // ==================== VERIFY 2FA ====================
-  async verifyTwoFactor(userId: string, code: string) {
-    if (code === '123456') {
-      return { success: true, message: '2FA verified successfully' };
+  /**
+   * Étape 2 (activation) : le premier code valide active la 2FA et renvoie les codes de secours.
+   * Ensuite : simple vérification d'un code.
+   */
+  async verifyTwoFactor(userId: string, code: string, lang: string = 'fr') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw this.twoFactorError('user_not_found', lang, 404);
+    const secret = decryptTotpSecret(user.twoFactorSecret);
+    if (!secret) throw this.twoFactorError('two_factor_not_configured', lang, 400, 'TWO_FACTOR_NOT_CONFIGURED');
+
+    if (!user.isTwoFactorEnabled) {
+      const step = verifyTotp(secret, code, twoFactorConfig().window, null);
+      if (step === null) throw this.twoFactorError('two_factor_invalid_code', lang, 400, 'TWO_FACTOR_INVALID_CODE');
+      const backupCodes = generateBackupCodes(twoFactorConfig().backupCodes);
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          isTwoFactorEnabled: true,
+          twoFactorBackupCodes: JSON.stringify({
+            backup: backupCodes.map((c) => hashBackupCode(c)),
+            lastStep: step,
+            enabledAt: new Date().toISOString(),
+          }),
+        },
+      });
+      await writeAudit(this.prisma, {
+        data: { userId, action: 'TWO_FACTOR_ENABLED', entity: 'USER', entityId: userId, level: 'WARN' },
+      }).catch(() => undefined);
+      return {
+        success: true,
+        enabled: true,
+        message: this.i18nService.translate('two_factor_enabled', lang),
+        data: { backupCodes }, // affichés UNE seule fois
+      };
     }
-    throw new UnauthorizedException('Invalid 2FA code');
+
+    const check = await this.checkTwoFactorCode(user, code);
+    if (!check.ok) throw this.twoFactorError('two_factor_invalid_code', lang, 400, 'TWO_FACTOR_INVALID_CODE');
+    return { success: true, message: this.i18nService.translate('two_factor_code_valid', lang), data: { method: check.method, backupCodesLeft: check.backupLeft } };
   }
 
-  // ==================== DISABLE 2FA ====================
-  async disableTwoFactor(userId: string, code: string) {
-    const verification = await this.verifyTwoFactor(userId, code);
-
-    if (!verification.success) {
-      throw new UnauthorizedException('Invalid 2FA code');
+  /** Désactivation : mot de passe + code (application ou code de secours). */
+  async disableTwoFactor(userId: string, code: string, password?: string, lang: string = 'fr') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw this.twoFactorError('user_not_found', lang, 404);
+    if (!password || !user.password || !(await bcrypt.compare(String(password), user.password))) {
+      throw this.twoFactorError('contact_wrong_password', lang, 400, 'TWO_FACTOR_WRONG_PASSWORD');
     }
-
+    if (this.twoFactorActive(user)) {
+      const check = await this.checkTwoFactorCode(user, code);
+      if (!check.ok) throw this.twoFactorError('two_factor_invalid_code', lang, 400, 'TWO_FACTOR_INVALID_CODE');
+    }
     await this.prisma.user.update({
       where: { id: userId },
+      data: { isTwoFactorEnabled: false, twoFactorSecret: null, twoFactorBackupCodes: null },
+    });
+    await writeAudit(this.prisma, {
+      data: { userId, action: 'TWO_FACTOR_DISABLED', entity: 'USER', entityId: userId, level: 'WARN' },
+    }).catch(() => undefined);
+    return { success: true, message: this.i18nService.translate('two_factor_disabled', lang) };
+  }
+
+  /** Nouveaux codes de secours (les anciens ne marchent plus). */
+  async regenerateTwoFactorBackupCodes(userId: string, code: string, lang: string = 'fr') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !this.twoFactorActive(user)) throw this.twoFactorError('two_factor_not_configured', lang, 400, 'TWO_FACTOR_NOT_CONFIGURED');
+    const check = await this.checkTwoFactorCode(user, code);
+    if (!check.ok) throw this.twoFactorError('two_factor_invalid_code', lang, 400, 'TWO_FACTOR_INVALID_CODE');
+    const fresh = await this.prisma.user.findUnique({ where: { id: userId } });
+    const state = readTwoFactorState(fresh?.twoFactorBackupCodes);
+    const backupCodes = generateBackupCodes(twoFactorConfig().backupCodes);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorBackupCodes: JSON.stringify({ ...state, backup: backupCodes.map((c) => hashBackupCode(c)) }) },
+    });
+    await writeAudit(this.prisma, {
+      data: { userId, action: 'TWO_FACTOR_BACKUP_CODES_RENEWED', entity: 'USER', entityId: userId, level: 'INFO' },
+    }).catch(() => undefined);
+    return { success: true, message: this.i18nService.translate('two_factor_backup_renewed', lang), data: { backupCodes } };
+  }
+
+  /** Admin : désactive la 2FA d'un utilisateur (téléphone perdu). */
+  async adminResetTwoFactor(userId: string, adminId: string, lang: string = 'fr') {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw this.twoFactorError('user_not_found', lang, 404);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { isTwoFactorEnabled: false, twoFactorSecret: null, twoFactorBackupCodes: null },
+    });
+    await writeAudit(this.prisma, {
+      data: { userId: adminId, action: 'TWO_FACTOR_RESET_BY_ADMIN', entity: 'USER', entityId: userId, level: 'WARN' },
+    }).catch(() => undefined);
+    return { success: true, message: this.i18nService.translate('two_factor_disabled', lang) };
+  }
+
+  /** Connexion d'un compte avec 2FA : demande le code de l'application (à chaque connexion). */
+  private async twoFactorLoginGate(params: { user: any; dto: any; ipAddress?: string; loginDevice: any; loginPlatform: string; lang: string }) {
+    const { user, dto, loginDevice, loginPlatform, lang } = params;
+    const now = new Date();
+    const ttl = 300;
+    const challengeId = crypto.randomUUID();
+    await this.prisma.loginOtpChallenge.updateMany({
+      where: { userId: user.id, deviceKey: this.loginDeviceKey(loginDevice, dto), consumedAt: null },
+      data: { consumedAt: now },
+    });
+    const challenge = await this.prisma.loginOtpChallenge.create({
       data: {
-        isTwoFactorEnabled: false,
-        twoFactorSecret: null,
+        id: challengeId,
+        userId: user.id,
+        codeHash: '-',
+        reason: 'TWO_FACTOR',
+        channels: 'TOTP',
+        deviceKey: this.loginDeviceKey(loginDevice, dto),
+        ipAddress: params.ipAddress || loginDevice?.ipAddress || null,
+        userAgent: loginDevice?.userAgent || dto?.userAgent || null,
+        platform: loginPlatform,
+        rememberMe: dto?.rememberMe === true || String(dto?.rememberMe) === 'true',
+        expiresAt: new Date(now.getTime() + ttl * 1000),
+        lastSentAt: now,
       },
     });
-
-    return { success: true, message: '2FA disabled successfully' };
+    return {
+      success: true,
+      requiresOtp: true,
+      method: 'TOTP',
+      code: 'TWO_FACTOR_REQUIRED',
+      message: this.i18nService.translate('two_factor_login_required', lang),
+      challengeId: challenge.id,
+      reason: 'TWO_FACTOR',
+      channels: ['TOTP'],
+      sentTo: {},
+      expiresIn: ttl,
+      resendIn: 0,
+      attemptsLeft: this.loginOtpConfig().maxAttempts,
+    };
   }
 
   // ==================== GET PROFILE ====================

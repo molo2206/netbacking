@@ -365,48 +365,28 @@ export class AuthServiceController {
   // ==================== 2FA MESSAGE PATTERNS ====================
 
   @MessagePattern('auth.enable2FA')
-  async enableTwoFactor(@Payload() data: { userId: string }) {
-    try {
-      console.log('[AuthService] Enable 2FA request received:', data.userId);
-      return await this.authService.enableTwoFactor(data.userId);
-    } catch (error) {
-      console.error('[AuthService] Enable 2FA failed:', error);
-      throw new RpcException({
-        status: 'error',
-        message: error.message || 'Enable 2FA failed',
-        statusCode: 400,
-      });
-    }
+  async enableTwoFactor(@Payload() data: { userId: string; lang?: string }) {
+    return this.authService.enableTwoFactor(data.userId, data.lang || 'fr');
   }
 
   @MessagePattern('auth.verify2FA')
-  async verifyTwoFactor(@Payload() data: { userId: string; code: string }) {
-    try {
-      console.log('[AuthService] Verify 2FA request received:', data.userId);
-      return await this.authService.verifyTwoFactor(data.userId, data.code);
-    } catch (error) {
-      console.error('[AuthService] Verify 2FA failed:', error);
-      throw new RpcException({
-        status: 'error',
-        message: error.message || 'Verify 2FA failed',
-        statusCode: 401,
-      });
-    }
+  async verifyTwoFactor(@Payload() data: { userId: string; code: string; lang?: string }) {
+    return this.authService.verifyTwoFactor(data.userId, data.code, data.lang || 'fr');
   }
 
   @MessagePattern('auth.disable2FA')
-  async disableTwoFactor(@Payload() data: { userId: string; code: string }) {
-    try {
-      console.log('[AuthService] Disable 2FA request received:', data.userId);
-      return await this.authService.disableTwoFactor(data.userId, data.code);
-    } catch (error) {
-      console.error('[AuthService] Disable 2FA failed:', error);
-      throw new RpcException({
-        status: 'error',
-        message: error.message || 'Disable 2FA failed',
-        statusCode: 400,
-      });
-    }
+  async disableTwoFactor(@Payload() data: { userId: string; code: string; password?: string; lang?: string }) {
+    return this.authService.disableTwoFactor(data.userId, data.code, data.password, data.lang || 'fr');
+  }
+
+  @MessagePattern('auth.2fa.backupCodes')
+  async regenerateBackupCodes(@Payload() data: { userId: string; code: string; lang?: string }) {
+    return this.authService.regenerateTwoFactorBackupCodes(data.userId, data.code, data.lang || 'fr');
+  }
+
+  @MessagePattern('auth.2fa.adminReset')
+  async adminResetTwoFactor(@Payload() data: { userId: string; adminId: string; lang?: string }) {
+    return this.authService.adminResetTwoFactor(data.userId, data.adminId, data.lang || 'fr');
   }
 
   // ==================== PROFILE MESSAGE PATTERNS ====================

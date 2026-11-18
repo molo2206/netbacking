@@ -581,15 +581,22 @@ export class ApiGatewayController {
     );
   }
 
+  // ==================== 2FA (application d'authentification) ====================
+  //  1. POST auth/enable-2fa            → { data: { secret, otpauthUrl } } : afficher le QR code
+  //  2. POST auth/verify-2fa  { code }  → 1er code valide = 2FA activée + codes de secours
+  //  3. Connexion : /auth/login répond { requiresOtp: true, method: "TOTP", challengeId }
+  //     → POST auth/login/verify-otp { challengeId, otpCode } (code de l'app ou code de secours)
+  //  4. POST auth/disable-2fa { code, password }
+
   @Post('auth/enable-2fa')
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
-  async enableTwoFactor(@CurrentUser() currentUser: any) {
+  async enableTwoFactor(@CurrentUser() currentUser: any, @Headers('lang') langHeader?: string) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
     return this.sendAuthMessage(
       'auth.enable2FA',
-      { userId: currentUser.id },
+      { userId: currentUser.id, lang: langHeader || 'fr' },
       'Enable 2FA failed',
       HttpStatus.BAD_REQUEST
     );
@@ -600,6 +607,7 @@ export class ApiGatewayController {
   async verifyTwoFactor(
     @CurrentUser() currentUser: any,
     @Body('code') code: string,
+    @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
@@ -609,12 +617,9 @@ export class ApiGatewayController {
     }
     return this.sendAuthMessage(
       'auth.verify2FA',
-      {
-        userId: currentUser.id,
-        code
-      },
+      { userId: currentUser.id, code: String(code), lang: langHeader || 'fr' },
       'Verify 2FA failed',
-      HttpStatus.UNAUTHORIZED
+      HttpStatus.BAD_REQUEST
     );
   }
 
@@ -622,21 +627,55 @@ export class ApiGatewayController {
   @UseGuards(JwtAuthGuard, AuthentificationGuard)
   async disableTwoFactor(
     @CurrentUser() currentUser: any,
-    @Body('code') code: string,
+    @Body() body: any,
+    @Headers('lang') langHeader?: string,
   ) {
     if (!currentUser || !currentUser.id) {
       throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
     }
-    if (!code) {
-      throw new HttpException('2FA code is required', HttpStatus.BAD_REQUEST);
+    if (!body?.code || !body?.password) {
+      throw new HttpException('code et password sont obligatoires', HttpStatus.BAD_REQUEST);
     }
     return this.sendAuthMessage(
       'auth.disable2FA',
-      {
-        userId: currentUser.id,
-        code
-      },
+      { userId: currentUser.id, code: String(body.code), password: body.password, lang: langHeader || 'fr' },
       'Disable 2FA failed',
+      HttpStatus.BAD_REQUEST
+    );
+  }
+
+  /** Nouveaux codes de secours. Body : { code } */
+  @Post('auth/2fa/backup-codes')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async regenerateTwoFactorBackupCodes(
+    @CurrentUser() currentUser: any,
+    @Body('code') code: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (!code) throw new HttpException('2FA code is required', HttpStatus.BAD_REQUEST);
+    return this.sendAuthMessage(
+      'auth.2fa.backupCodes',
+      { userId: currentUser.id, code: String(code), lang: langHeader || 'fr' },
+      'Backup codes renewal failed',
+      HttpStatus.BAD_REQUEST
+    );
+  }
+
+  /** Admin : désactiver la 2FA d'un utilisateur (téléphone perdu). */
+  @Delete('admin/users/:userId/2fa')
+  @UseGuards(JwtAuthGuard, AuthentificationGuard)
+  async adminResetTwoFactor(
+    @CurrentUser() currentUser: any,
+    @Param('userId') userId: string,
+    @Headers('lang') langHeader?: string,
+  ) {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUPER_ADMIN') {
+      throw new HttpException('Access denied. Admin only.', HttpStatus.FORBIDDEN);
+    }
+    return this.sendAuthMessage(
+      'auth.2fa.adminReset',
+      { userId, adminId: currentUser.id, lang: langHeader || 'fr' },
+      '2FA reset failed',
       HttpStatus.BAD_REQUEST
     );
   }
